@@ -8,13 +8,12 @@ import {
   ApiError,
   createSubmission,
   listDocumentTypes,
-  listFaculties,
   listPublishedRuleSets,
   listSubmissions,
   listUniversities,
 } from "@/lib/api";
-import type { DocumentType, Faculty, PublishedRuleSet, Submission, University } from "@/lib/types";
-import { Button, Masthead, Panel, SectionHeading, StatusBadge } from "@/components/ui";
+import type { DocumentType, PublishedRuleSet, Submission, University } from "@/lib/types";
+import { Button, AppShell, Panel, SectionHeading, StatusBadge } from "@/components/ui";
 import { useRouter } from "next/navigation";
 
 export default function DashboardPage() {
@@ -36,33 +35,22 @@ export default function DashboardPage() {
   if (!session) return null;
 
   return (
-    <>
-      <Masthead
-        subtitle={`Signed in as ${session.displayName || session.email} · ${session.roles.map((r) => ROLE_LABELS[r]).join(", ")}`}
-        right={
-          <div className="flex items-center gap-4">
-            {hasRole(session, "university_admin", "super_admin") && (
-              <Button variant="ghost" className="!text-paper hover:!underline" onClick={() => router.push("/admin/users")}>
-                Manage users
-              </Button>
-            )}
-            <Button
-              variant="ghost"
-              className="!text-paper hover:!underline"
-              onClick={() => {
-                clearSession();
-                router.replace("/login");
-              }}
-            >
-              Sign out
-            </Button>
-          </div>
-        }
-      />
+    <AppShell
+      active="/dashboard"
+      isAdmin={hasRole(session, "university_admin", "super_admin")}
+      userLabel={session.displayName || session.email}
+      roleLabel={session.roles.map((r) => ROLE_LABELS[r]).join(", ")}
+      onSignOut={() => {
+        clearSession();
+        router.replace("/login");
+      }}
+      onNavigate={(href) => router.push(href)}
+    >
       <main className="max-w-5xl mx-auto px-6 py-10">
+      <h1 className="font-serif text-2xl text-ink mb-8">Submissions</h1>
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-8">
         <section>
-          <SectionHeading>Submissions</SectionHeading>
+          <SectionHeading>All submissions</SectionHeading>
           {loadError && <p className="text-sm text-brick mb-4">{loadError}</p>}
           {submissions === null && !loadError && <p className="text-sm text-muted">Loading…</p>}
           {submissions && submissions.length === 0 && (
@@ -72,7 +60,7 @@ export default function DashboardPage() {
             <Panel>
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-line text-left text-xs uppercase tracking-wide text-muted">
+                  <tr className="border-b border-line text-left text-xs font-medium text-muted">
                     <th className="px-4 py-3 font-medium">ID</th>
                     <th className="px-4 py-3 font-medium">Student</th>
                     <th className="px-4 py-3 font-medium">Registration #</th>
@@ -109,15 +97,13 @@ export default function DashboardPage() {
         <UploadPanel session={session} onCreated={refresh} />
       </div>
       </main>
-    </>
+    </AppShell>
   );
 }
 
 function UploadPanel({ session, onCreated }: { session: NonNullable<ReturnType<typeof useRequireSession>>; onCreated: () => void }) {
   const [universities, setUniversities] = useState<University[]>([]);
   const [universityId, setUniversityId] = useState<number | null>(null);
-  const [faculties, setFaculties] = useState<Faculty[]>([]);
-  const [facultyId, setFacultyId] = useState<number | "">("");
   const [documentTypes, setDocumentTypes] = useState<DocumentType[]>([]);
   const [documentTypeId, setDocumentTypeId] = useState<number | "">("");
   const [ruleSets, setRuleSets] = useState<PublishedRuleSet[]>([]);
@@ -142,7 +128,6 @@ function UploadPanel({ session, onCreated }: { session: NonNullable<ReturnType<t
 
   useEffect(() => {
     if (!universityId) return;
-    listFaculties(session, universityId).then(setFaculties);
     listDocumentTypes(session, universityId).then(setDocumentTypes);
     listPublishedRuleSets(session, universityId).then((rows) => {
       setRuleSets(rows);
@@ -155,14 +140,14 @@ function UploadPanel({ session, onCreated }: { session: NonNullable<ReturnType<t
     listPublishedRuleSets(
       session,
       universityId,
-      facultyId || undefined,
+      undefined,
       documentTypeId || undefined
     ).then((rows) => {
       setRuleSets(rows);
       setRuleSetId(rows.length > 0 ? rows[0].id : "");
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [facultyId, documentTypeId]);
+  }, [documentTypeId]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -176,7 +161,6 @@ function UploadPanel({ session, onCreated }: { session: NonNullable<ReturnType<t
     try {
       const created = await createSubmission(session, {
         universityId,
-        facultyId: facultyId || undefined,
         documentTypeId: documentTypeId || undefined,
         ruleSetId,
         studentName,
@@ -238,22 +222,9 @@ function UploadPanel({ session, onCreated }: { session: NonNullable<ReturnType<t
                 className="focus-ring w-full border border-line bg-panel px-3 py-2 text-sm"
               />
             </Field>
-            {faculties.length > 0 && (
-              <Field label="Faculty (optional)">
-                <select
-                  className="focus-ring w-full border border-line bg-panel px-3 py-2 text-sm"
-                  value={facultyId}
-                  onChange={(e) => setFacultyId(e.target.value ? Number(e.target.value) : "")}
-                >
-                  <option value="">—</option>
-                  {faculties.map((f) => (
-                    <option key={f.id} value={f.id}>
-                      {f.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            )}
+            <p className="text-xs text-muted -mt-2">
+              Programme and Faculty are taken from the student&apos;s account and don&apos;t need to be entered here.
+            </p>
             {documentTypes.length > 0 && (
               <Field label="Document type (optional)">
                 <select

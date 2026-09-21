@@ -3,12 +3,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useRequireSession } from "@/lib/use-session";
-import { hasRole } from "@/lib/session";
+import { hasRole, ROLE_LABELS, clearSession } from "@/lib/session";
 import {
   ApiError,
   applyFixes,
   certificateDownloadUrl,
   compareVersions,
+  deleteSubmission,
   downloadFile,
   evaluationReportUrl,
   generateCertificate,
@@ -22,7 +23,7 @@ import {
   versionDownloadUrl,
 } from "@/lib/api";
 import type { AuditEvent, DocumentVersion, Finding, FixPreviewOut, ReviewSummary, VersionCompare } from "@/lib/types";
-import { Button, Masthead, Panel, SectionHeading, SeverityBadge, StatusBadge } from "@/components/ui";
+import { Button, AppShell, Modal, Panel, SectionHeading, SeverityBadge, StatusBadge } from "@/components/ui";
 
 const REVIEW_ROLES = ["research_officer", "university_admin", "super_admin"] as const;
 
@@ -41,8 +42,11 @@ export default function SubmissionDetailPage() {
   const [preview, setPreview] = useState<FixPreviewOut | null>(null);
   const [busy, setBusy] = useState(false);
   const [compare, setCompare] = useState<VersionCompare | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const canReview = hasRole(session ?? null, ...REVIEW_ROLES);
+  const canDelete = hasRole(session ?? null, "university_admin", "super_admin");
 
   const refreshAll = useCallback(() => {
     if (!session || !id) return;
@@ -173,6 +177,20 @@ export default function SubmissionDetailPage() {
     }
   }
 
+  async function handleDeleteSubmission() {
+    if (!session) return;
+    setDeleting(true);
+    try {
+      await deleteSubmission(session, id);
+      router.replace("/dashboard");
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Delete failed.");
+      setShowDeleteConfirm(false);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   async function handleCompare(sourceId: number, targetId: number) {
     if (!session) return;
     try {
@@ -185,13 +203,18 @@ export default function SubmissionDetailPage() {
   const s = summary.submission;
 
   return (
-    <>
-      <Masthead subtitle="Submission review" />
+    <AppShell
+      active="/dashboard"
+      isAdmin={hasRole(session, "university_admin", "super_admin")}
+      userLabel={session.displayName || session.email}
+      roleLabel={session.roles.map((r) => ROLE_LABELS[r]).join(", ")}
+      onSignOut={() => {
+        clearSession();
+        router.replace("/login");
+      }}
+      onNavigate={(href) => router.push(href)}
+    >
       <main className="max-w-5xl mx-auto px-6 py-10">
-      <Button variant="ghost" onClick={() => router.push("/dashboard")} className="mb-6 !px-0">
-        ← Back to dashboard
-      </Button>
-
       <header className="mb-8 pb-6 border-b border-line">
         <div className="flex items-baseline justify-between flex-wrap gap-2">
           <h1 className="font-serif text-2xl text-ink">
@@ -202,12 +225,16 @@ export default function SubmissionDetailPage() {
             <Button variant="ghost" disabled={busy} onClick={handleDownloadEvaluationReport}>
               Download evaluation report (PDF)
             </Button>
+            {canDelete && (
+              <Button variant="danger" onClick={() => setShowDeleteConfirm(true)}>
+                Delete submission
+              </Button>
+            )}
           </div>
         </div>
         {(s.programme || s.supervisor) && (
           <p className="text-sm text-muted mt-1">
-            {s.programme}
-            {s.supervisor ? ` · Supervisor: ${s.supervisor}` : ""}
+            {[s.programme, s.supervisor ? `Supervisor: ${s.supervisor}` : null].filter(Boolean).join("  /  ")}
           </p>
         )}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-5">
@@ -216,7 +243,7 @@ export default function SubmissionDetailPage() {
           <Metric label="Fixable now" value={String(summary.fixable_open_findings)} />
           <Metric
             label="Decision"
-            value={summary.latest_compliance_decision ? summary.latest_compliance_decision.decision : "Pending"}
+            value={summary.latest_compliance_decision ? summary.latest_compliance_decision.decision.replace(/_/g, " ") : "Pending"}
           />
         </div>
       </header>
@@ -290,7 +317,10 @@ export default function SubmissionDetailPage() {
                   {v.filename}
                 </p>
                 <p className="text-xs text-muted mt-0.5">
-                  {v.change_summary ?? "Original submission"} · SHA-256 {v.sha256.slice(0, 16)}…
+                  {v.change_summary ?? "Original submission"}
+                </p>
+                <p className="text-xs text-muted/70 font-mono mt-0.5">
+                  SHA-256 {v.sha256.slice(0, 16)}…
                 </p>
               </div>
               <div className="flex gap-3">
@@ -327,15 +357,17 @@ export default function SubmissionDetailPage() {
 
       <section className="mb-10">
         <SectionHeading>Audit trail</SectionHeading>
-        <Panel className="p-4 max-h-72 overflow-auto">
-          <ol className="text-xs font-mono space-y-2">
-            {audit.map((e) => (
-              <li key={e.id} className="text-muted">
-                <span className="text-ink">{e.action}</span> · {e.actor_id} ·{" "}
-                {new Date(e.created_at).toLocaleString()} {e.result ? `· ${e.result}` : ""}
-              </li>
-            ))}
-          </ol>
+        <Panel className="max-h-72 overflow-auto divide-y divide-line">
+          {audit.map((e) => (
+            <div key={e.id} className="px-4 py-2.5 flex items-baseline justify-between gap-4 text-xs">
+              <div>
+                <span className="text-ink font-medium">{e.action}</span>
+                <span className="text-muted ml-2">by {e.actor_id}</span>
+                {e.result && <span className="text-muted ml-2">({e.result})</span>}
+              </div>
+              <span className="text-muted/70 font-mono whitespace-nowrap">{new Date(e.created_at).toLocaleString()}</span>
+            </div>
+          ))}
         </Panel>
       </section>
 
@@ -362,14 +394,33 @@ export default function SubmissionDetailPage() {
         </section>
       )}
       </main>
-    </>
+      {showDeleteConfirm && (
+        <Modal
+          title="Delete this submission?"
+          onClose={() => setShowDeleteConfirm(false)}
+          footer={
+            <>
+              <Button variant="ghost" onClick={() => setShowDeleteConfirm(false)}>Cancel</Button>
+              <Button variant="danger" onClick={handleDeleteSubmission} disabled={deleting}>
+                {deleting ? "Deleting…" : "Delete permanently"}
+              </Button>
+            </>
+          }
+        >
+          <p className="text-sm text-ink">
+            This permanently deletes submission #{id} for <strong>{s.student_name}</strong> — every version,
+            finding, review action, and its audit trail. This cannot be undone.
+          </p>
+        </Modal>
+      )}
+    </AppShell>
   );
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <p className="text-xs uppercase tracking-wide text-muted">{label}</p>
+      <p className="text-xs font-medium text-muted">{label}</p>
       <p className="text-lg font-serif text-ink capitalize">{value}</p>
     </div>
   );
@@ -448,11 +499,11 @@ function FindingCard({
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
         <div className="bg-paper border border-line rounded p-2.5">
-          <p className="text-[10px] uppercase tracking-wide text-muted mb-1">Expected</p>
+          <p className="text-[10px] font-medium text-muted mb-1">Expected</p>
           <p className="text-sm text-ink">{f.expected}</p>
         </div>
         <div className="bg-paper border border-line rounded p-2.5">
-          <p className="text-[10px] uppercase tracking-wide text-muted mb-1">Actual</p>
+          <p className="text-[10px] font-medium text-muted mb-1">Actual</p>
           <p className="text-sm text-ink">{f.actual}</p>
         </div>
       </div>

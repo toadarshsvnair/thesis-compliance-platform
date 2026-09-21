@@ -1,21 +1,22 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useRequireSession } from "@/lib/use-session";
-import { hasRole, ROLE_LABELS } from "@/lib/session";
+import { clearSession, hasRole, ROLE_LABELS } from "@/lib/session";
 import {
   ApiError,
   AdminUser,
   createAdminUser,
   deleteAdminUser,
   listAdminUsers,
+  listFaculties,
   listUniversities,
   resetAdminUserPassword,
   updateAdminUser,
 } from "@/lib/api";
-import type { Role, University } from "@/lib/types";
-import { Button, Masthead, Panel, SectionHeading, StatusBadge } from "@/components/ui";
+import type { Faculty, Role, University } from "@/lib/types";
+import { Button, AppShell, Modal, Panel, SectionHeading } from "@/components/ui";
 
 const ROLE_ORDER: Role[] = ["student", "research_officer", "university_admin", "super_admin"];
 
@@ -25,8 +26,15 @@ export default function AdminUsersPage() {
 
   const [users, setUsers] = useState<AdminUser[] | null>(null);
   const [universities, setUniversities] = useState<University[]>([]);
+  const [faculties, setFaculties] = useState<Faculty[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
   const [showCreate, setShowCreate] = useState(false);
+  const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
+  const [resettingUser, setResettingUser] = useState<AdminUser | null>(null);
+  const [deletingUser, setDeletingUser] = useState<AdminUser | null>(null);
+  const [openMenuId, setOpenMenuId] = useState<number | null>(null);
 
   const refresh = useCallback(() => {
     if (!session) return;
@@ -37,7 +45,11 @@ export default function AdminUsersPage() {
 
   useEffect(refresh, [refresh]);
   useEffect(() => {
-    if (session) listUniversities(session).then(setUniversities);
+    if (!session) return;
+    listUniversities(session).then((rows) => {
+      setUniversities(rows);
+      if (rows.length > 0) listFaculties(session, rows[0].id).then(setFaculties);
+    });
   }, [session]);
 
   if (!session) return null;
@@ -52,106 +64,87 @@ export default function AdminUsersPage() {
     );
   }
 
+  function flashNotice(msg: string) {
+    setNotice(msg);
+    setTimeout(() => setNotice((n) => (n === msg ? null : n)), 3500);
+  }
+
   async function handleSuspendToggle(user: AdminUser) {
     if (!session) return;
+    setOpenMenuId(null);
     try {
       await updateAdminUser(session, user.id, { active: !user.active });
+      flashNotice(user.active ? `${user.email} suspended.` : `${user.email} reactivated.`);
       refresh();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Update failed.");
     }
   }
 
-  async function handleResetPassword(user: AdminUser) {
-    if (!session) return;
-    const newPassword = prompt(`New password for ${user.email} (min. 8 characters):`);
-    if (!newPassword) return;
+  async function handleDelete() {
+    if (!session || !deletingUser) return;
     try {
-      await resetAdminUserPassword(session, user.id, newPassword);
-      alert(`Password reset for ${user.email}.`);
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Password reset failed.");
-    }
-  }
-
-  async function handleDelete(user: AdminUser) {
-    if (!session) return;
-    if (!confirm(`Permanently delete ${user.email}? This cannot be undone.`)) return;
-    try {
-      await deleteAdminUser(session, user.id);
+      await deleteAdminUser(session, deletingUser.id);
+      flashNotice(`${deletingUser.email} deleted.`);
+      setDeletingUser(null);
       refresh();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Delete failed. If this account owns submissions, suspend it instead.");
-    }
-  }
-
-  async function handleEditExpiry(user: AdminUser) {
-    if (!session) return;
-    const input = prompt(
-      `Account end date for ${user.email} (YYYY-MM-DD), or leave blank to remove any end date:`,
-      user.expires_at ? user.expires_at.slice(0, 10) : ""
-    );
-    if (input === null) return;
-    try {
-      if (input.trim() === "") {
-        await updateAdminUser(session, user.id, { clearExpiry: true });
-      } else {
-        await updateAdminUser(session, user.id, { expiresAt: new Date(input).toISOString() });
-      }
-      refresh();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Update failed.");
+      setDeletingUser(null);
     }
   }
 
   return (
-    <>
-      <Masthead subtitle="User management" />
+    <AppShell
+      active="/admin/users"
+      isAdmin={hasRole(session, "university_admin", "super_admin")}
+      userLabel={session.displayName || session.email}
+      roleLabel={session.roles.map((r) => ROLE_LABELS[r]).join(", ")}
+      onSignOut={() => {
+        clearSession();
+        router.replace("/login");
+      }}
+      onNavigate={(href) => router.push(href)}
+    >
       <main className="max-w-5xl mx-auto px-6 py-10">
-        <Button variant="ghost" onClick={() => router.push("/dashboard")} className="mb-6 !px-0">
-          ← Back to dashboard
-        </Button>
+        <h1 className="font-serif text-2xl text-ink mb-8">Manage users</h1>
 
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
           <SectionHeading>Accounts</SectionHeading>
+          <Button onClick={() => setShowCreate(true)}>+ Create user</Button>
         </div>
-        <Button onClick={() => setShowCreate((v) => !v)} className="mb-6">
-          {showCreate ? "Cancel" : "+ Create user"}
-        </Button>
 
+        {notice && (
+          <div className="mb-4 text-sm text-forest bg-forest/10 border border-forest/30 rounded px-3 py-2">
+            {notice}
+          </div>
+        )}
         {error && <p className="text-sm text-brick mb-4">{error}</p>}
 
-        {showCreate && (
-          <CreateUserForm
-            session={session}
-            universities={universities}
-            onCreated={() => {
-              setShowCreate(false);
-              refresh();
-            }}
-          />
-        )}
-
         {users === null && !error && <p className="text-sm text-muted">Loading…</p>}
-        {users && users.length === 0 && <p className="text-sm text-muted">No accounts yet.</p>}
+        {users && users.length === 0 && (
+          <Panel className="p-6 text-center">
+            <p className="text-sm text-muted">No accounts yet.</p>
+          </Panel>
+        )}
         {users && users.length > 0 && (
-          <Panel>
+          <Panel className="overflow-visible">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-line text-left text-xs uppercase tracking-wide text-muted">
+                <tr className="border-b border-line text-left text-xs font-medium text-muted">
                   <th className="px-4 py-3 font-medium">Name</th>
                   <th className="px-4 py-3 font-medium">Email</th>
                   <th className="px-4 py-3 font-medium">Role(s)</th>
                   <th className="px-4 py-3 font-medium">Status</th>
                   <th className="px-4 py-3 font-medium">End date</th>
-                  <th className="px-4 py-3 font-medium">Actions</th>
+                  <th className="px-4 py-3 font-medium w-16"></th>
                 </tr>
               </thead>
               <tbody>
                 {users.map((u) => {
-                  const expired = u.expires_at && new Date(u.expires_at) < new Date();
+                  const expired = !!u.expires_at && new Date(u.expires_at) < new Date();
                   return (
-                    <tr key={u.id} className="border-b border-line last:border-0 align-top">
+                    <tr key={u.id} className="border-b border-line last:border-0 align-top hover:bg-paper/60">
                       <td className="px-4 py-3">{u.display_name || "—"}</td>
                       <td className="px-4 py-3 text-muted">{u.email}</td>
                       <td className="px-4 py-3">
@@ -159,33 +152,42 @@ export default function AdminUsersPage() {
                       </td>
                       <td className="px-4 py-3">
                         {!u.active ? (
-                          <StatusBadge status="rejected" />
+                          <span className="inline-block rounded-sm border border-brick/40 text-brick bg-brick/5 px-2 py-0.5 text-xs font-medium">
+                            Suspended
+                          </span>
                         ) : expired ? (
                           <span className="inline-block rounded-sm border border-ochre/50 text-ochre bg-ochre/10 px-2 py-0.5 text-xs font-medium">
                             Expired
                           </span>
                         ) : (
-                          <StatusBadge status="fixed" />
+                          <span className="inline-block rounded-sm border border-forest/40 text-forest bg-forest/5 px-2 py-0.5 text-xs font-medium">
+                            Active
+                          </span>
                         )}
                       </td>
                       <td className="px-4 py-3 text-muted">
                         {u.expires_at ? new Date(u.expires_at).toLocaleDateString() : "No end date"}
                       </td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-wrap gap-x-3 gap-y-1">
-                          <Button variant="ghost" onClick={() => handleSuspendToggle(u)}>
-                            {u.active ? "Suspend" : "Reactivate"}
-                          </Button>
-                          <Button variant="ghost" onClick={() => handleResetPassword(u)}>
-                            Reset password
-                          </Button>
-                          <Button variant="ghost" onClick={() => handleEditExpiry(u)}>
-                            Set end date
-                          </Button>
-                          <Button variant="ghost" className="!text-brick" onClick={() => handleDelete(u)}>
-                            Delete
-                          </Button>
-                        </div>
+                      <td className="px-4 py-3 text-right relative">
+                        <RowActionMenu
+                          open={openMenuId === u.id}
+                          onToggle={() => setOpenMenuId(openMenuId === u.id ? null : u.id)}
+                          onClose={() => setOpenMenuId(null)}
+                          user={u}
+                          onEdit={() => {
+                            setOpenMenuId(null);
+                            setEditingUser(u);
+                          }}
+                          onResetPassword={() => {
+                            setOpenMenuId(null);
+                            setResettingUser(u);
+                          }}
+                          onSuspendToggle={() => handleSuspendToggle(u)}
+                          onDelete={() => {
+                            setOpenMenuId(null);
+                            setDeletingUser(u);
+                          }}
+                        />
                       </td>
                     </tr>
                   );
@@ -195,24 +197,153 @@ export default function AdminUsersPage() {
           </Panel>
         )}
       </main>
-    </>
+
+      {showCreate && (
+        <CreateUserModal
+          session={session}
+          universities={universities}
+          faculties={faculties}
+          onFacultiesForUniversity={(uid) => listFaculties(session, uid).then(setFaculties)}
+          onClose={() => setShowCreate(false)}
+          onCreated={() => {
+            setShowCreate(false);
+            flashNotice("Account created.");
+            refresh();
+          }}
+        />
+      )}
+
+      {editingUser && (
+        <EditUserModal
+          session={session}
+          user={editingUser}
+          faculties={faculties}
+          onClose={() => setEditingUser(null)}
+          onSaved={() => {
+            setEditingUser(null);
+            flashNotice("Account updated.");
+            refresh();
+          }}
+        />
+      )}
+
+      {resettingUser && (
+        <ResetPasswordModal
+          session={session}
+          user={resettingUser}
+          onClose={() => setResettingUser(null)}
+          onDone={() => {
+            setResettingUser(null);
+            flashNotice(`Password reset for ${resettingUser.email}.`);
+          }}
+        />
+      )}
+
+      {deletingUser && (
+        <Modal
+          title="Delete account?"
+          onClose={() => setDeletingUser(null)}
+          footer={
+            <>
+              <Button variant="ghost" onClick={() => setDeletingUser(null)}>Cancel</Button>
+              <Button variant="danger" onClick={handleDelete}>Delete permanently</Button>
+            </>
+          }
+        >
+          <p className="text-sm text-ink">
+            Permanently delete <strong>{deletingUser.email}</strong>? This cannot be undone.
+          </p>
+          <p className="text-sm text-muted mt-2">
+            If this account owns any submissions, deletion will be blocked — suspend it instead to preserve audit history.
+          </p>
+        </Modal>
+      )}
+    </AppShell>
   );
 }
 
-function CreateUserForm({
+function RowActionMenu({
+  open,
+  onToggle,
+  onClose,
+  user,
+  onEdit,
+  onResetPassword,
+  onSuspendToggle,
+  onDelete,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  onClose: () => void;
+  user: AdminUser;
+  onEdit: () => void;
+  onResetPassword: () => void;
+  onSuspendToggle: () => void;
+  onDelete: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open, onClose]);
+
+  return (
+    <div ref={ref} className="inline-block text-left">
+      <button
+        onClick={onToggle}
+        className="focus-ring w-8 h-8 rounded hover:bg-paper border border-transparent hover:border-line text-muted text-lg leading-none"
+        aria-label="Actions"
+        aria-haspopup="menu"
+      >
+        ⋯
+      </button>
+      {open && (
+        <div className="absolute right-4 mt-1 w-44 bg-panel border border-line rounded-md shadow-lg z-40 py-1 text-left">
+          <button onClick={onEdit} className="w-full text-left px-3 py-2 text-sm text-ink hover:bg-paper">
+            Edit details
+          </button>
+          <button onClick={onResetPassword} className="w-full text-left px-3 py-2 text-sm text-ink hover:bg-paper">
+            Reset password
+          </button>
+          <button onClick={onSuspendToggle} className="w-full text-left px-3 py-2 text-sm text-ink hover:bg-paper">
+            {user.active ? "Suspend" : "Reactivate"}
+          </button>
+          <div className="border-t border-line my-1" />
+          <button onClick={onDelete} className="w-full text-left px-3 py-2 text-sm text-brick hover:bg-brick/5">
+            Delete
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CreateUserModal({
   session,
   universities,
+  faculties,
+  onFacultiesForUniversity,
+  onClose,
   onCreated,
 }: {
   session: NonNullable<ReturnType<typeof useRequireSession>>;
   universities: University[];
+  faculties: Faculty[];
+  onFacultiesForUniversity: (universityId: number) => void;
+  onClose: () => void;
   onCreated: () => void;
 }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
-  const [role, setRole] = useState<Role>("research_officer");
+  const [role, setRole] = useState<Role>("student");
   const [universityId, setUniversityId] = useState<number | "">(universities[0]?.id ?? "");
+  const [programme, setProgramme] = useState("");
+  const [facultyId, setFacultyId] = useState<number | "">("");
   const [expiresAt, setExpiresAt] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -233,6 +364,8 @@ function CreateUserForm({
         role,
         universityId,
         expiresAt: expiresAt ? new Date(expiresAt).toISOString() : undefined,
+        programme: programme || undefined,
+        facultyId: facultyId || undefined,
       });
       onCreated();
     } catch (e) {
@@ -243,40 +376,203 @@ function CreateUserForm({
   }
 
   return (
-    <Panel className="p-5 mb-8">
-      <form onSubmit={handleSubmit} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+    <Modal
+      title="Create user"
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button onClick={handleSubmit} disabled={busy}>{busy ? "Creating…" : "Create account"}</Button>
+        </>
+      }
+    >
+      <form onSubmit={handleSubmit} className="space-y-4">
         <Field label="Full name">
-          <input required value={displayName} onChange={(e) => setDisplayName(e.target.value)} className="focus-ring w-full border border-line bg-paper px-3 py-2 text-sm" />
+          <input required value={displayName} onChange={(e) => setDisplayName(e.target.value)} className="focus-ring w-full border border-line bg-paper px-3 py-2 text-sm rounded" />
         </Field>
         <Field label="Email">
-          <input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="focus-ring w-full border border-line bg-paper px-3 py-2 text-sm" />
+          <input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="focus-ring w-full border border-line bg-paper px-3 py-2 text-sm rounded" />
         </Field>
         <Field label="Temporary password (min. 8 characters)">
-          <input required minLength={8} type="text" value={password} onChange={(e) => setPassword(e.target.value)} className="focus-ring w-full border border-line bg-paper px-3 py-2 text-sm" />
+          <input required minLength={8} type="text" value={password} onChange={(e) => setPassword(e.target.value)} className="focus-ring w-full border border-line bg-paper px-3 py-2 text-sm rounded" />
         </Field>
         <Field label="University">
-          <select value={universityId} onChange={(e) => setUniversityId(Number(e.target.value))} className="focus-ring w-full border border-line bg-paper px-3 py-2 text-sm">
+          <select
+            value={universityId}
+            onChange={(e) => {
+              const id = Number(e.target.value);
+              setUniversityId(id);
+              onFacultiesForUniversity(id);
+            }}
+            className="focus-ring w-full border border-line bg-paper px-3 py-2 text-sm rounded"
+          >
             {universities.map((u) => (
               <option key={u.id} value={u.id}>{u.name}</option>
             ))}
           </select>
         </Field>
         <Field label="Role">
-          <select value={role} onChange={(e) => setRole(e.target.value as Role)} className="focus-ring w-full border border-line bg-paper px-3 py-2 text-sm">
+          <select value={role} onChange={(e) => setRole(e.target.value as Role)} className="focus-ring w-full border border-line bg-paper px-3 py-2 text-sm rounded">
             {ROLE_ORDER.map((r) => (
               <option key={r} value={r}>{ROLE_LABELS[r]}</option>
             ))}
           </select>
         </Field>
+        {role === "student" && (
+          <>
+            <Field label="Programme (optional)">
+              <input value={programme} onChange={(e) => setProgramme(e.target.value)} placeholder="e.g. PhD Computer Science" className="focus-ring w-full border border-line bg-paper px-3 py-2 text-sm rounded" />
+            </Field>
+            <Field label="Faculty (optional)">
+              <select value={facultyId} onChange={(e) => setFacultyId(e.target.value ? Number(e.target.value) : "")} className="focus-ring w-full border border-line bg-paper px-3 py-2 text-sm rounded">
+                <option value="">—</option>
+                {faculties.map((f) => (
+                  <option key={f.id} value={f.id}>{f.name}</option>
+                ))}
+              </select>
+            </Field>
+          </>
+        )}
         <Field label="Account end date (optional)">
-          <input type="date" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} className="focus-ring w-full border border-line bg-paper px-3 py-2 text-sm" />
+          <input type="date" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} className="focus-ring w-full border border-line bg-paper px-3 py-2 text-sm rounded" />
         </Field>
-        {error && <p className="text-sm text-brick sm:col-span-2">{error}</p>}
-        <div className="sm:col-span-2">
-          <Button type="submit" disabled={busy}>{busy ? "Creating…" : "Create account"}</Button>
-        </div>
+        {error && <p className="text-sm text-brick">{error}</p>}
       </form>
-    </Panel>
+    </Modal>
+  );
+}
+
+function EditUserModal({
+  session,
+  user,
+  faculties,
+  onClose,
+  onSaved,
+}: {
+  session: NonNullable<ReturnType<typeof useRequireSession>>;
+  user: AdminUser;
+  faculties: Faculty[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [displayName, setDisplayName] = useState(user.display_name ?? "");
+  const [programme, setProgramme] = useState(user.programme ?? "");
+  const [facultyId, setFacultyId] = useState<number | "">(user.faculty_id ?? "");
+  const [expiresAt, setExpiresAt] = useState(user.expires_at ? user.expires_at.slice(0, 10) : "");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const isStudent = user.roles.some((r) => r.role === "student");
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await updateAdminUser(session, user.id, {
+        displayName,
+        programme: programme || undefined,
+        facultyId: facultyId || undefined,
+        clearFaculty: facultyId === "",
+        expiresAt: expiresAt ? new Date(expiresAt).toISOString() : undefined,
+        clearExpiry: expiresAt === "",
+      });
+      onSaved();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Update failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal
+      title={`Edit ${user.email}`}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button onClick={handleSubmit} disabled={busy}>{busy ? "Saving…" : "Save changes"}</Button>
+        </>
+      }
+    >
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <Field label="Full name">
+          <input required value={displayName} onChange={(e) => setDisplayName(e.target.value)} className="focus-ring w-full border border-line bg-paper px-3 py-2 text-sm rounded" />
+        </Field>
+        {isStudent && (
+          <>
+            <Field label="Programme">
+              <input value={programme} onChange={(e) => setProgramme(e.target.value)} className="focus-ring w-full border border-line bg-paper px-3 py-2 text-sm rounded" />
+            </Field>
+            <Field label="Faculty">
+              <select value={facultyId} onChange={(e) => setFacultyId(e.target.value ? Number(e.target.value) : "")} className="focus-ring w-full border border-line bg-paper px-3 py-2 text-sm rounded">
+                <option value="">—</option>
+                {faculties.map((f) => (
+                  <option key={f.id} value={f.id}>{f.name}</option>
+                ))}
+              </select>
+            </Field>
+          </>
+        )}
+        <Field label="Account end date">
+          <input type="date" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} className="focus-ring w-full border border-line bg-paper px-3 py-2 text-sm rounded" />
+          <p className="text-xs text-muted mt-1">Leave blank for no end date.</p>
+        </Field>
+        {error && <p className="text-sm text-brick">{error}</p>}
+      </form>
+    </Modal>
+  );
+}
+
+function ResetPasswordModal({
+  session,
+  user,
+  onClose,
+  onDone,
+}: {
+  session: NonNullable<ReturnType<typeof useRequireSession>>;
+  user: AdminUser;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [newPassword, setNewPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await resetAdminUserPassword(session, user.id, newPassword);
+      onDone();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Password reset failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal
+      title={`Reset password`}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button onClick={handleSubmit} disabled={busy || newPassword.length < 8}>{busy ? "Saving…" : "Set new password"}</Button>
+        </>
+      }
+    >
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <p className="text-sm text-muted">Setting a new password for <strong>{user.email}</strong>.</p>
+        <Field label="New password (min. 8 characters)">
+          <input required minLength={8} type="text" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="focus-ring w-full border border-line bg-paper px-3 py-2 text-sm rounded" />
+        </Field>
+        {error && <p className="text-sm text-brick">{error}</p>}
+      </form>
+    </Modal>
   );
 }
 

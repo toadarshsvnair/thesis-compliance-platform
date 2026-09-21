@@ -46,7 +46,7 @@ export default function LoginPage() {
 
         <form onSubmit={handleSubmit} className="space-y-5">
           <div>
-            <label className="block text-xs font-semibold tracking-wide text-muted mb-1.5">EMAIL</label>
+            <label className="block text-xs font-semibold tracking-wide text-muted mb-1.5">Email</label>
             <input
               required
               type="email"
@@ -57,7 +57,7 @@ export default function LoginPage() {
             />
           </div>
           <div>
-            <label className="block text-xs font-semibold tracking-wide text-muted mb-1.5">PASSWORD</label>
+            <label className="block text-xs font-semibold tracking-wide text-muted mb-1.5">Password</label>
             <input
               required
               type="password"
@@ -68,7 +68,7 @@ export default function LoginPage() {
           </div>
           {error && <p className="text-sm text-brick">{error}</p>}
           <Button type="submit" disabled={busy} className="w-full !rounded !py-2.5">
-            {busy ? "Signing in…" : "Sign In →"}
+            {busy ? "Signing in…" : "Sign in"}
           </Button>
         </form>
 

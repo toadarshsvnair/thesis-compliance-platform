@@ -69,6 +69,8 @@ export interface AdminUser {
   active: boolean;
   expires_at: string | null;
   created_at: string;
+  programme: string | null;
+  faculty_id: number | null;
   roles: Array<{ role: string; university_id: number | null }>;
 }
 
@@ -79,7 +81,7 @@ export const listAdminUsers = (session: Session, universityId?: number) => {
 
 export const createAdminUser = (
   session: Session,
-  input: { email: string; password: string; displayName: string; role: string; universityId: number; expiresAt?: string }
+  input: { email: string; password: string; displayName: string; role: string; universityId: number; expiresAt?: string; programme?: string; facultyId?: number }
 ) =>
   request<AdminUser>(session, "/admin/users", {
     method: "POST",
@@ -90,13 +92,15 @@ export const createAdminUser = (
       role: input.role,
       university_id: input.universityId,
       expires_at: input.expiresAt || null,
+      programme: input.programme || null,
+      faculty_id: input.facultyId || null,
     }),
   });
 
 export const updateAdminUser = (
   session: Session,
   userId: number,
-  patch: { displayName?: string; active?: boolean; role?: string; expiresAt?: string | null; clearExpiry?: boolean }
+  patch: { displayName?: string; active?: boolean; role?: string; expiresAt?: string | null; clearExpiry?: boolean; programme?: string; facultyId?: number; clearFaculty?: boolean }
 ) =>
   request<AdminUser>(session, `/admin/users/${userId}`, {
     method: "PATCH",
@@ -106,6 +110,9 @@ export const updateAdminUser = (
       role: patch.role,
       expires_at: patch.expiresAt,
       clear_expiry: patch.clearExpiry ?? false,
+      programme: patch.programme,
+      faculty_id: patch.facultyId,
+      clear_faculty: patch.clearFaculty ?? false,
     }),
   });
 
@@ -319,6 +326,8 @@ export const generateCertificate = (session: Session, submissionId: number) =>
 
 export const certificateDownloadUrl = (id: number) => `${API_BASE}/submissions/${id}/certificate/download`;
 export const evaluationReportUrl = (id: number) => `${API_BASE}/submissions/${id}/evaluation-report`;
+export const deleteSubmission = (session: Session, id: number) =>
+  request<{ status: string; id: number }>(session, `/submissions/${id}`, { method: "DELETE" });
 
 // Plain <a href> links can't attach the X-User-* auth headers a browser
 // navigation needs, so downloads go through fetch() (which can) and then

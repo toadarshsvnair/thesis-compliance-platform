@@ -70,42 +70,99 @@ export function Panel({ children, className }: { children: React.ReactNode; clas
   return <div className={clsx("border border-line bg-panel", className)}>{children}</div>;
 }
 
-export function SectionHeading({ children }: { children: React.ReactNode }) {
-  return <h2 className="font-serif text-lg text-ink border-b border-line pb-2 mb-4">{children}</h2>;
-}
-
-const TRUST_MARKS = [
-  "Annexure 18 / 19 Rule Coverage",
-  "SHA-256 Version Integrity",
-  "Hash-Chained Audit Trail",
-  "Human-Gated Compliance Decision",
-];
-
-/** The top masthead used on every authenticated page — an institutional-portal
- * treatment (navy bar, trust-mark strip) rather than a plain page title. The
- * trust marks are real, verifiable properties of this platform, not
- * accreditation claims. */
-export function Masthead({ subtitle, right }: { subtitle?: string; right?: React.ReactNode }) {
+export function Modal({
+  title,
+  onClose,
+  children,
+  footer,
+}: {
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+  footer?: React.ReactNode;
+}) {
   return (
-    <div className="bg-navy text-paper">
-      <div className="max-w-5xl mx-auto px-6 py-5 flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <p className="text-[11px] tracking-[0.14em] text-gold font-medium mb-1">UNIVERSITY THESIS REVIEW</p>
-          <h1 className="font-serif text-2xl leading-tight">Thesis Compliance Platform</h1>
-          {subtitle && <p className="text-sm text-paper/70 mt-1">{subtitle}</p>}
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+      <div className="absolute inset-0 bg-ink/40" onClick={onClose} />
+      <div className="relative bg-panel rounded-lg shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-line">
+          <h3 className="font-serif text-lg text-ink">{title}</h3>
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="focus-ring text-muted hover:text-ink text-xl leading-none px-1"
+          >
+            ×
+          </button>
         </div>
-        {right}
-      </div>
-      <div className="border-t border-paper/10">
-        <div className="max-w-5xl mx-auto px-6 py-2.5 flex flex-wrap gap-x-6 gap-y-1">
-          {TRUST_MARKS.map((mark) => (
-            <span key={mark} className="text-[11px] text-paper/60 flex items-center gap-1.5">
-              <span className="w-1 h-1 rounded-full bg-gold" />
-              {mark}
-            </span>
-          ))}
-        </div>
+        <div className="px-5 py-4">{children}</div>
+        {footer && <div className="px-5 py-4 border-t border-line flex justify-end gap-2">{footer}</div>}
       </div>
     </div>
   );
+}
+
+const NAV_ITEMS: { href: string; label: string; adminOnly?: boolean }[] = [
+  { href: "/dashboard", label: "Submissions" },
+  { href: "/admin/users", label: "Manage users", adminOnly: true },
+];
+
+/** Persistent left-nav shell used on every authenticated page, replacing a
+ * per-page top banner and manual "back to dashboard" links with real
+ * cross-page navigation. */
+export function AppShell({
+  active,
+  isAdmin,
+  userLabel,
+  roleLabel,
+  onSignOut,
+  onNavigate,
+  children,
+}: {
+  active: string;
+  isAdmin: boolean;
+  userLabel: string;
+  roleLabel: string;
+  onSignOut: () => void;
+  onNavigate: (href: string) => void;
+  children: React.ReactNode;
+}) {
+  const items = NAV_ITEMS.filter((i) => !i.adminOnly || isAdmin);
+  return (
+    <div className="min-h-screen flex flex-col md:flex-row">
+      <aside className="md:w-60 shrink-0 bg-navy-deep text-paper flex md:flex-col justify-between">
+        <div className="flex md:flex-col w-full">
+          <div className="px-5 py-5">
+            <span className="font-serif text-lg leading-tight">Thesis Compliance</span>
+          </div>
+          <nav className="flex md:flex-col md:mt-2 px-2 gap-1 overflow-x-auto md:overflow-visible">
+            {items.map((item) => (
+              <button
+                key={item.href}
+                onClick={() => onNavigate(item.href)}
+                className={clsx(
+                  "focus-ring text-left px-3 py-2 rounded text-sm whitespace-nowrap transition-colors",
+                  active === item.href ? "bg-paper/10 text-paper font-medium" : "text-paper/65 hover:bg-paper/5 hover:text-paper"
+                )}
+              >
+                {item.label}
+              </button>
+            ))}
+          </nav>
+        </div>
+        <div className="hidden md:block px-5 py-4 border-t border-paper/10">
+          <p className="text-sm text-paper truncate">{userLabel}</p>
+          <p className="text-xs text-paper/55 mb-3">{roleLabel}</p>
+          <button onClick={onSignOut} className="focus-ring text-xs text-paper/70 hover:text-paper hover:underline underline-offset-2">
+            Sign out
+          </button>
+        </div>
+      </aside>
+      <div className="flex-1 min-w-0">{children}</div>
+    </div>
+  );
+}
+
+export function SectionHeading({ children }: { children: React.ReactNode }) {
+  return <h2 className="font-serif text-lg text-ink border-b border-line pb-2 mb-4">{children}</h2>;
 }

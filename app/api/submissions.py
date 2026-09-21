@@ -4,7 +4,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPExcepti
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 from ..db import get_db
-from ..models import Submission, DocumentVersion, Finding, RuleSet, ProcessingJob
+from ..models import Submission, DocumentVersion, Finding, RuleSet, ProcessingJob, User
 from ..schemas import SubmissionOut
 from ..config import settings
 from ..services.storage import StorageService
@@ -100,7 +100,17 @@ def create_submission(
         raise HTTPException(400, "Rule set does not belong to this university.")
     if rule_set.status != "published":
         raise HTTPException(409, "New submissions must use a published rule-set version.")
-    if rule_set.faculty_id is not None and rule_set.faculty_id != faculty_id:
+
+    # Programme and Faculty are properties of the student's account (set once
+    # by an admin when the account is created), not re-entered on every
+    # upload. An explicit form value still wins, for the case of someone
+    # other than the student themselves uploading on their behalf.
+    owner_id = _principal_user_id(principal)
+    owner = db.get(User, owner_id) if owner_id else None
+    effective_faculty_id = faculty_id if faculty_id is not None else (owner.faculty_id if owner else None)
+    effective_programme = programme if programme is not None else (owner.programme if owner else None)
+
+    if rule_set.faculty_id is not None and rule_set.faculty_id != effective_faculty_id:
         raise HTTPException(400, "Rule set is not mapped to the selected faculty.")
     if rule_set.document_type_id is not None and rule_set.document_type_id != document_type_id:
         raise HTTPException(400, "Rule set is not mapped to the selected document type.")
@@ -108,13 +118,13 @@ def create_submission(
         raise HTTPException(400, "Only DOCX uploads are supported.")
     submission = Submission(
         university_id=university_id,
-        faculty_id=faculty_id,
+        faculty_id=effective_faculty_id,
         document_type_id=document_type_id,
         rule_set_id=rule_set_id,
-        owner_user_id=_principal_user_id(principal),
+        owner_user_id=owner_id,
         student_name=student_name,
         registration_number=registration_number,
-        programme=programme,
+        programme=effective_programme,
         supervisor=supervisor,
         status="uploaded",
     )
@@ -196,6 +206,49 @@ def get_findings(submission_id: int, db: Session = Depends(get_db), principal = 
          "auto_fix_allowed": x.auto_fix_allowed, "status": x.status}
         for x in rows
     ]
+
+
+@router.delete("/{submission_id}")
+def delete_submission(submission_id: int, db: Session = Depends(get_db), principal=Depends(get_principal)):
+    """Permanently removes one submission and everything derived from it.
+    Admin-only (University Admin for their own university's submissions,
+    Super Admin for any) -- distinct from /dev/reset-submissions, which wipes
+    all test data at once; this targets a single submission a person
+    actually asked to delete."""
+    submission = db.get(Submission, submission_id)
+    if not submission:
+        raise HTTPException(404, "Submission not found")
+    authorize_submission(db, principal, submission)
+    if not principal.has_role("university_admin", "super_admin"):
+        raise HTTPException(403, "Requires a University Admin or Super Admin role.")
+
+    university_id = submission.university_id
+    db.execute(text(
+        "DELETE FROM fix_approvals WHERE submission_id = :sid"
+    ), {"sid": submission_id})
+    db.execute(text(
+        "DELETE FROM finding_reviews WHERE submission_id = :sid"
+    ), {"sid": submission_id})
+    db.execute(text(
+        "DELETE FROM compliance_decisions WHERE submission_id = :sid"
+    ), {"sid": submission_id})
+    db.execute(text(
+        "DELETE FROM processing_jobs WHERE submission_id = :sid"
+    ), {"sid": submission_id})
+    db.execute(text(
+        "DELETE FROM findings WHERE submission_id = :sid"
+    ), {"sid": submission_id})
+    db.execute(text(
+        "DELETE FROM document_versions WHERE submission_id = :sid"
+    ), {"sid": submission_id})
+    db.execute(text(
+        "DELETE FROM audit_events WHERE resource_type = 'submission' AND resource_id = :sid_str"
+    ), {"sid_str": str(submission_id)})
+    db.execute(text("DELETE FROM submissions WHERE id = :sid"), {"sid": submission_id})
+    audit(db, university_id, principal.subject, "SUBMISSION_DELETED", "university", university_id,
+          result="deleted", metadata_json={"deleted_submission_id": submission_id})
+    db.commit()
+    return {"status": "deleted", "id": submission_id}
 
 
 @router.post("/{submission_id}/validate")

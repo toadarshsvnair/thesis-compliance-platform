@@ -16,6 +16,8 @@ class User(Base):
     password_hash: Mapped[str | None] = mapped_column(String(200), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    programme: Mapped[str | None] = mapped_column(String(250), nullable=True)
+    faculty_id: Mapped[int | None] = mapped_column(ForeignKey("faculties.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 class UserRole(Base):

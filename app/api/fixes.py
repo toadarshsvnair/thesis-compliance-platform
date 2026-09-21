@@ -162,7 +162,7 @@ def apply_fixes(submission_id: int, request: FixRequest, db: Session = Depends(g
                   rule_set_id=submission.rule_set_id, result="failed",
                   metadata_json={"error_type": type(exc).__name__, "source_version_id": version.id})
             db.commit()
-            raise HTTPException(500, "Fix was versioned, but revalidation failed; the new version was retained for review.")
+            raise HTTPException(500, f"Fix was versioned, but revalidation failed ({type(exc).__name__}: {exc}); the new version was retained for review.")
 
         new_rules = {x.rule_id for x in db.scalars(select(Finding).where(
             Finding.document_version_id == new_version.id,
@@ -198,4 +198,4 @@ def apply_fixes(submission_id: int, request: FixRequest, db: Session = Depends(g
               rule_set_id=submission.rule_set_id,
               result="failed", metadata_json={"error_type": type(exc).__name__})
         db.commit()
-        raise HTTPException(500, "Controlled auto-fix failed; original version was retained.")
+        raise HTTPException(500, f"Controlled auto-fix failed ({type(exc).__name__}: {exc}); original version was retained.")

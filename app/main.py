@@ -75,6 +75,10 @@ def _backfill_new_columns():
             conn.execute(text("ALTER TABLE submissions ADD COLUMN owner_user_id INTEGER REFERENCES users(id)"))
         if "expires_at" not in user_columns:
             conn.execute(text("ALTER TABLE users ADD COLUMN expires_at TIMESTAMPTZ"))
+        if "programme" not in user_columns:
+            conn.execute(text("ALTER TABLE users ADD COLUMN programme VARCHAR(250)"))
+        if "faculty_id" not in user_columns:
+            conn.execute(text("ALTER TABLE users ADD COLUMN faculty_id INTEGER REFERENCES faculties(id)"))
 
 app.include_router(health_router,prefix="/api")
 app.include_router(submissions_router,prefix="/api")
