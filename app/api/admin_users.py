@@ -281,6 +281,15 @@ def delete_user(user_id: int, db: Session = Depends(get_db), principal: Principa
         )
     for r in _user_roles(db, user.id):
         db.delete(r)
+    db.flush()  # Force the role deletions to actually execute now, rather
+    # than leaving their order relative to the user deletion up to
+    # SQLAlchemy's flush ordering. User and UserRole have no explicit
+    # relationship() between them (only a column-level ForeignKey), so nothing
+    # guarantees session.delete() calls on two independently-marked objects
+    # get sequenced by their table-level foreign key dependency -- confirmed
+    # by this exact scenario: the role deletions were queued correctly, but
+    # Postgres still rejected the user delete because user_roles hadn't been
+    # deleted yet at the point that statement ran.
     try:
         db.delete(user)
         db.commit()

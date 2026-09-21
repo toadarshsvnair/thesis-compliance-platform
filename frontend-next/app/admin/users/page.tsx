@@ -474,10 +474,12 @@ function EditUserModal({
   const [facultyId, setFacultyId] = useState<number | "">(user.faculty_id ?? "");
   const [registrationNumber, setRegistrationNumber] = useState(user.registration_number ?? "");
   const [expiresAt, setExpiresAt] = useState(user.expires_at ? user.expires_at.slice(0, 10) : "");
+  const originalRole = (user.roles[0]?.role as Role) ?? "student";
+  const [role, setRole] = useState<Role>(originalRole);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const isStudent = user.roles.some((r) => r.role === "student");
+  const isStudent = role === "student";
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -492,6 +494,13 @@ function EditUserModal({
         registrationNumber: registrationNumber || undefined,
         expiresAt: expiresAt ? new Date(expiresAt).toISOString() : undefined,
         clearExpiry: expiresAt === "",
+        // Only sent when actually changed -- the backend treats any
+        // provided role as an intentional change (and applies the same
+        // self-role-change / last-super-admin safety checks used at
+        // creation), so sending the unchanged value on every edit would
+        // wrongly trip those checks for an admin editing their own other
+        // details.
+        role: role !== originalRole ? role : undefined,
       });
       onSaved();
     } catch (e) {
@@ -515,6 +524,13 @@ function EditUserModal({
       <form onSubmit={handleSubmit} className="space-y-4">
         <Field label="Full name">
           <input required value={displayName} onChange={(e) => setDisplayName(e.target.value)} className="focus-ring w-full border border-line bg-paper px-3 py-2 text-sm rounded" />
+        </Field>
+        <Field label="Role">
+          <select value={role} onChange={(e) => setRole(e.target.value as Role)} className="focus-ring w-full border border-line bg-paper px-3 py-2 text-sm rounded">
+            {ROLE_ORDER.map((r) => (
+              <option key={r} value={r}>{ROLE_LABELS[r]}</option>
+            ))}
+          </select>
         </Field>
         {isStudent && (
           <>
