@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Thesis Compliance — Human Review</title>
+<style>
+body{font-family:system-ui,-apple-system,Segoe UI,Arial,sans-serif;margin:0;background:#f5f7fa;color:#17202a}.wrap{max-width:1200px;margin:auto;padding:24px}.card{background:#fff;border:1px solid #dfe5eb;border-radius:10px;padding:18px;margin:14px 0;box-shadow:0 1px 2px #00000008}.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}input,button,textarea,select{font:inherit;padding:9px;border:1px solid #c9d2dc;border-radius:6px}button{cursor:pointer;background:#17202a;color:#fff}.muted{color:#667085}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}.metric{padding:14px;border:1px solid #e4e7ec;border-radius:8px}.finding{border:1px solid #e4e7ec;border-radius:8px;padding:12px;margin:8px 0}.major{border-left:5px solid #b42318}.minor{border-left:5px solid #b54708}.review{border-left:5px solid #175cd3}.ok{border-left:5px solid #027a48}.small{font-size:12px}.hidden{display:none}pre{white-space:pre-wrap;background:#f8fafc;padding:10px;border-radius:6px;max-height:280px;overflow:auto}.danger{background:#b42318}.secondary{background:#475467}.success{background:#027a48}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Thesis Compliance — Human Review</h1>
+<p class="muted">Development dashboard for reviewing findings, controlled fixes, versions, audit history, and the final human compliance decision.</p>
+<div id="uploadCard" class="card hidden">
+  <h2>Submit a thesis (demo)</h2>
+  <p class="muted small">Demo mode: uses the auto-seeded "<span id="demoUniName"></span>" rule set. Data here is disposable.</p>
+  <div class="row">
+    <label>Student name <input id="upStudent" placeholder="Jane Student"></label>
+    <label>Registration # <input id="upReg" placeholder="REG-0001"></label>
+    <input id="upFile" type="file" accept=".docx">
+    <button onclick="uploadSubmission()">Upload &amp; validate</button>
+  </div>
+  <div id="uploadResult"></div>
+</div>
+<div class="card row"><label>Submission ID <input id="sid" type="number" min="1"></label><button onclick="loadAll()">Load</button></div>
+<div id="error" class="card hidden"></div>
+<div id="content" class="hidden">
+<div id="summary" class="card"></div>
+<div class="card"><h2>Findings</h2><div id="findings"></div><div class="row"><button onclick="previewFixes()">Preview selected fixes</button><button class="success" onclick="applyFixes()">Apply selected fixes</button></div><div id="preview"></div></div>
+<div class="card"><h2>Versions</h2><div id="versions"></div><div id="compare"></div></div>
+<div class="card"><h2>Audit trail</h2><pre id="audit"></pre></div>
+<div class="card"><h2>Human compliance decision</h2><textarea id="decisionComment" rows="3" style="width:100%" placeholder="Record the rationale for the decision..."></textarea><div class="row" style="margin-top:10px"><button class="success" onclick="decision('compliant')">Record Compliant</button><button class="danger" onclick="decision('returned')">Return for Correction</button></div></div>
+</div></div>
+<script>
+const H={'X-User-Id':'reviewer-1','X-User-Email':'reviewer@example.edu','X-User-Roles':'research_officer','X-University-Ids':'1,2'};
+let current={};
+async function api(path,opt={}){opt.headers={...(opt.headers||{}),...H}; if(opt.body)opt.headers['Content-Type']='application/json'; const r=await fetch('/api'+path,opt); const t=await r.text(); if(!r.ok)throw new Error(t); return t?JSON.parse(t):{};}
+function esc(x){return String(x??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
+function showErr(e){document.getElementById('error').classList.remove('hidden');document.getElementById('error').textContent=e.message||e;}
+async function loadAll(){try{const id=document.getElementById('sid').value;if(!id)return; current.id=id; const [s,f,v,a]=await Promise.all([api(`/submissions/${id}/review-summary`),api(`/submissions/${id}/findings`),api(`/submissions/${id}/versions`),api(`/submissions/${id}/audit`)]);current.findings=f;current.versions=v;document.getElementById('content').classList.remove('hidden');document.getElementById('error').classList.add('hidden');renderSummary(s);renderFindings(f);renderVersions(v);document.getElementById('audit').textContent=JSON.stringify(a,null,2);}catch(e){showErr(e)}}
+function renderSummary(x){const s=x.submission,v=x.current_version;document.getElementById('summary').innerHTML=`<h2>${esc(s.student_name)} — ${esc(s.registration_number)}</h2><p>${esc(s.programme||'')} ${s.supervisor?' | Supervisor: '+esc(s.supervisor):''}</p><div class="grid"><div class="metric"><b>Status</b><br>${esc(s.status)}</div><div class="metric"><b>Current version</b><br>${v?'v'+v.version_number:'-'}</div><div class="metric"><b>Findings</b><br>${x.total_findings}</div><div class="metric"><b>Fixable</b><br>${x.fixable_open_findings}</div></div>`}
+function renderFindings(fs){document.getElementById('findings').innerHTML=fs.map(f=>`<div class="finding ${f.severity.toLowerCase()}"><div class="row"><label><input type="checkbox" class="fixbox" data-id="${f.id}" ${f.auto_fix_allowed&&f.status==='open'?'':'disabled'}></label><b>${esc(f.rule_id)}</b><span>${esc(f.severity)}</span><span class="muted">${esc(f.status)}</span></div><div><b>${esc(f.location)}</b> — ${esc(f.message)}</div><div class="small">Expected: ${esc(f.expected)} | Actual: ${esc(f.actual)}</div>${f.status==='open'?`<button class="secondary" onclick="reviewFinding(${f.id},'reviewed')">Mark reviewed</button> <button class="secondary" onclick="reviewFinding(${f.id},'waived')">Waive with comment</button>`:''}</div>`).join('')||'<p>No findings.</p>'}
+function selected(){return [...document.querySelectorAll('.fixbox:checked')].map(x=>Number(x.dataset.id));}
+async function previewFixes(){try{const ids=selected();const p=await api(`/submissions/${current.id}/fixes/preview`,{method:'POST',body:JSON.stringify({finding_ids:ids,confirm:false})});document.getElementById('preview').innerHTML='<pre>'+esc(JSON.stringify(p,null,2))+'</pre>';}catch(e){showErr(e)}}
+async function applyFixes(){try{const ids=selected();if(!ids.length)return alert('Select at least one eligible finding.');if(!confirm('Create a new immutable document version and revalidate it?'))return;const p=await api(`/submissions/${current.id}/fixes/apply`,{method:'POST',body:JSON.stringify({finding_ids:ids,confirm:true})});alert('Created version v'+p.target_version_number+' and revalidated.');loadAll();}catch(e){showErr(e)}}
+async function reviewFinding(id,action){const comment=prompt('Review comment:');if(!comment)return;try{await api(`/submissions/${current.id}/findings/${id}/review`,{method:'POST',body:JSON.stringify({action,comment})});loadAll();}catch(e){showErr(e)}}
+function renderVersions(vs){document.getElementById('versions').innerHTML=vs.map(v=>`<div class="finding"><b>v${v.version_number}</b> ${v.is_current?'(current)':''}<br>${esc(v.filename)}<br><span class="small">${esc(v.change_summary||'Original submission')} | SHA-256 ${esc(v.sha256)}</span><div class="row"><a href="/api/submissions/${current.id}/versions/${v.id}/download" target="_blank">Download</a>${v.parent_version_id?`<button class="secondary" onclick="compare(${v.parent_version_id},${v.id})">Compare with parent</button>`:''}</div></div>`).join('')}
+async function compare(a,b){try{const x=await api(`/submissions/${current.id}/versions/${a}/compare/${b}`);document.getElementById('compare').innerHTML='<h3>Version comparison</h3><pre>'+esc(JSON.stringify(x,null,2))+'</pre>';}catch(e){showErr(e)}}
+async function decision(d){const c=document.getElementById('decisionComment').value.trim();if(!c)return alert('Enter a rationale/comment.');if(!confirm('Record the human compliance decision: '+d+'?'))return;try{await api(`/submissions/${current.id}/review/decision`,{method:'POST',body:JSON.stringify({decision:d,comment:c})});loadAll();}catch(e){showErr(e)}}
+let demo=null;
+async function initDemo(){
+  try{
+    const r=await fetch('/api/dev/bootstrap',{headers:H});
+    if(!r.ok) return; // not a demo deployment; upload card stays hidden
+    demo=await r.json();
+    if(!demo.rule_set_id){document.getElementById('uploadResult').innerHTML='<p class="muted">Demo data is still seeding — reload in a moment.</p>';}
+    document.getElementById('demoUniName').textContent=demo.university_name||'Demo University';
+    document.getElementById('uploadCard').classList.remove('hidden');
+  }catch(e){/* not a demo deployment */}
+}
+async function uploadSubmission(){
+  const fileInput=document.getElementById('upFile');
+  const student=document.getElementById('upStudent').value.trim();
+  const reg=document.getElementById('upReg').value.trim();
+  const resultEl=document.getElementById('uploadResult');
+  if(!demo||!demo.rule_set_id) return resultEl.innerHTML='<p>Demo rule set not ready yet.</p>';
+  if(!fileInput.files.length) return resultEl.innerHTML='<p>Choose a .docx file first.</p>';
+  if(!student||!reg) return resultEl.innerHTML='<p>Enter a student name and registration number.</p>';
+  const fd=new FormData();
+  fd.append('university_id',demo.university_id);
+  fd.append('rule_set_id',demo.rule_set_id);
+  fd.append('student_name',student);
+  fd.append('registration_number',reg);
+  fd.append('file',fileInput.files[0]);
+  resultEl.innerHTML='<p class="muted">Uploading and scanning…</p>';
+  try{
+    const r=await fetch('/api/submissions',{method:'POST',headers:H,body:fd});
+    const t=await r.text();
+    if(!r.ok) throw new Error(t);
+    const s=JSON.parse(t);
+    resultEl.innerHTML=`<p>Submission <b>#${s.id}</b> created, status "${esc(s.status)}". Validation is running in the background — click Load below in a few seconds.</p>`;
+    document.getElementById('sid').value=s.id;
+  }catch(e){showErr(e)}
+}
+initDemo();
+</script>
+</body></html>

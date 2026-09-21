@@ -1,0 +1,98 @@
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: thesis_compliance
+      POSTGRES_USER: thesis
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:8-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    restart: unless-stopped
+
+  clamav:
+    image: clamav/clamav:stable
+    volumes:
+      - clamavdata:/var/lib/clamav
+    restart: unless-stopped
+
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgresql+psycopg://thesis:${POSTGRES_PASSWORD}@db:5432/thesis_compliance
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_ROOT: /data
+      ENVIRONMENT: production
+      CLAMAV_ENABLED: "true"
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: 3310
+      MALWARE_SCAN_FAIL_CLOSED: "true"
+      PROCESSING_WORKER_REQUIRED: "true"
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?set in .env}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:?set in .env}
+      OIDC_ISSUER: ${OIDC_ISSUER:?set in .env}
+      OIDC_AUDIENCE: ${OIDC_AUDIENCE:?set in .env}
+      OIDC_JWKS_URL: ${OIDC_JWKS_URL:?set in .env}
+      OIDC_REQUIRED: "true"
+      SECRET_KEY: ${SECRET_KEY:?set in .env}
+      S3_ENABLED: "true"
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: thesis-documents
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:?set in .env}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:?set in .env}
+    volumes:
+      - appdata:/data
+    depends_on:
+      - db
+      - redis
+      - clamav
+      - minio
+    restart: unless-stopped
+
+  worker:
+    build: .
+    command: ["python", "worker/processing_worker.py"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://thesis:${POSTGRES_PASSWORD}@db:5432/thesis_compliance
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_ROOT: /data
+      ENVIRONMENT: production
+      PROCESSING_WORKER_REQUIRED: "true"
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: 3310
+    volumes:
+      - appdata:/data
+    depends_on:
+      - db
+      - redis
+      - clamav
+    read_only: true
+    tmpfs:
+      - /tmp:size=512m,noexec,nosuid
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:?set in .env}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:?set in .env}
+    volumes:
+      - objectdata:/data
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  clamavdata:
+  objectdata:
+  appdata:
+  workerdata:

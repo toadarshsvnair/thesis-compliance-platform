@@ -1,0 +1,28 @@
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: thesis_compliance
+      POSTGRES_USER: thesis
+      POSTGRES_PASSWORD: thesis
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgresql+psycopg://thesis:thesis@db:5432/thesis_compliance
+      STORAGE_ROOT: /data
+      MAX_UPLOAD_MB: 50
+      ENVIRONMENT: development
+    volumes:
+      - ./storage:/data
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+
+volumes:
+  pgdata:
