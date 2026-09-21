@@ -268,11 +268,15 @@ def delete_user(user_id: int, db: Session = Depends(get_db), principal: Principa
             "This is the last active Super Admin account and can't be deleted -- "
             "promote another account to Super Admin first.",
         )
-    if db.scalar(select(Submission).where(Submission.owner_user_id == user.id)):
+    blocking = db.scalars(select(Submission).where(Submission.owner_user_id == user.id)).all()
+    if blocking:
+        ids = ", ".join(f"#{s.id}" for s in blocking[:10])
+        more = f" and {len(blocking) - 10} more" if len(blocking) > 10 else ""
         raise HTTPException(
             409,
-            "This account owns one or more submissions and can't be deleted outright "
-            "(that would orphan audit history). Suspend the account instead.",
+            f"This account still owns {len(blocking)} submission(s) ({ids}{more}) and can't be "
+            f"deleted outright (that would orphan audit history). Delete those submissions first, "
+            f"or suspend the account instead of deleting it.",
         )
     for r in _user_roles(db, user.id):
         db.delete(r)

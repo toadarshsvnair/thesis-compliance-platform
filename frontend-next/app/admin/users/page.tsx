@@ -89,7 +89,16 @@ export default function AdminUsersPage() {
       setDeletingUser(null);
       refresh();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Delete failed. If this account owns submissions, suspend it instead.");
+      // If this isn't an ApiError, the request never completed as a normal
+      // HTTP response (a network failure, a CORS issue, etc.) -- show
+      // whatever the real error actually says rather than guessing at a
+      // generic message that may have nothing to do with the true cause.
+      const message = e instanceof ApiError
+        ? e.message
+        : e instanceof Error
+        ? `Delete failed: ${e.message}`
+        : "Delete failed for an unknown reason.";
+      setError(message);
       setDeletingUser(null);
     }
   }
