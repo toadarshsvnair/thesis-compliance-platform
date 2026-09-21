@@ -75,6 +75,7 @@ def list_submissions(
             id=s.id, status=s.status, student_name=s.student_name,
             registration_number=s.registration_number,
             current_version_id=s.current_version_id, findings_count=count,
+            created_at=s.created_at,
         ))
     return out
 
@@ -86,8 +87,8 @@ def create_submission(
     faculty_id: int | None = Form(None),
     document_type_id: int | None = Form(None),
     rule_set_id: int = Form(...),
-    student_name: str = Form(...),
-    registration_number: str = Form(...),
+    student_name: str | None = Form(None),
+    registration_number: str | None = Form(None),
     programme: str | None = Form(None),
     supervisor: str | None = Form(None),
     file: UploadFile = File(...),
@@ -101,14 +102,29 @@ def create_submission(
     if rule_set.status != "published":
         raise HTTPException(409, "New submissions must use a published rule-set version.")
 
-    # Programme and Faculty are properties of the student's account (set once
-    # by an admin when the account is created), not re-entered on every
-    # upload. An explicit form value still wins, for the case of someone
-    # other than the student themselves uploading on their behalf.
+    # Programme, Faculty, name, and registration number are properties of
+    # the student's own account (set once by an admin when the account is
+    # created) when the person uploading IS that student -- none of these
+    # need to be re-typed on every upload in that case. An explicit form
+    # value still wins, for the case of someone other than the student
+    # themselves (a Research Officer, say) uploading on their behalf, since
+    # that uploader's own account has no bearing on whose thesis this is.
     owner_id = _principal_user_id(principal)
     owner = db.get(User, owner_id) if owner_id else None
     effective_faculty_id = faculty_id if faculty_id is not None else (owner.faculty_id if owner else None)
     effective_programme = programme if programme is not None else (owner.programme if owner else None)
+    effective_student_name = student_name if student_name is not None else (owner.display_name if owner else None)
+    effective_registration_number = (
+        registration_number if registration_number is not None
+        else (owner.registration_number if owner else None)
+    )
+    if not effective_student_name or not effective_registration_number:
+        raise HTTPException(
+            400,
+            "Student name and registration number are required. If you are a student, "
+            "ask your University Admin to set these on your account; otherwise, provide "
+            "them directly with this upload.",
+        )
 
     if rule_set.faculty_id is not None and rule_set.faculty_id != effective_faculty_id:
         raise HTTPException(400, "Rule set is not mapped to the selected faculty.")
@@ -123,8 +139,8 @@ def create_submission(
         document_type_id=document_type_id,
         rule_set_id=rule_set_id,
         owner_user_id=owner_id,
-        student_name=student_name,
-        registration_number=registration_number,
+        student_name=effective_student_name,
+        registration_number=effective_registration_number,
         programme=effective_programme,
         supervisor=supervisor,
         status="uploaded",
@@ -178,6 +194,7 @@ def create_submission(
         registration_number=submission.registration_number,
         current_version_id=submission.current_version_id,
         findings_count=0,
+        created_at=submission.created_at,
     )
 
 @router.get("/{submission_id}", response_model=SubmissionOut)
@@ -190,7 +207,8 @@ def get_submission(submission_id: int, db: Session = Depends(get_db), principal 
     return SubmissionOut(
         id=s.id, status=s.status, student_name=s.student_name,
         registration_number=s.registration_number,
-        current_version_id=s.current_version_id, findings_count=count
+        current_version_id=s.current_version_id, findings_count=count,
+        created_at=s.created_at,
     )
 
 @router.get("/{submission_id}/findings")
@@ -224,28 +242,34 @@ def delete_submission(submission_id: int, db: Session = Depends(get_db), princip
         raise HTTPException(403, "Requires a University Admin or Super Admin role.")
 
     university_id = submission.university_id
-    db.execute(text(
-        "DELETE FROM fix_approvals WHERE submission_id = :sid"
-    ), {"sid": submission_id})
-    db.execute(text(
-        "DELETE FROM finding_reviews WHERE submission_id = :sid"
-    ), {"sid": submission_id})
-    db.execute(text(
-        "DELETE FROM compliance_decisions WHERE submission_id = :sid"
-    ), {"sid": submission_id})
-    db.execute(text(
-        "DELETE FROM processing_jobs WHERE submission_id = :sid"
-    ), {"sid": submission_id})
-    db.execute(text(
-        "DELETE FROM findings WHERE submission_id = :sid"
-    ), {"sid": submission_id})
-    db.execute(text(
-        "DELETE FROM document_versions WHERE submission_id = :sid"
-    ), {"sid": submission_id})
-    db.execute(text(
-        "DELETE FROM audit_events WHERE resource_type = 'submission' AND resource_id = :sid_str"
-    ), {"sid_str": str(submission_id)})
-    db.execute(text("DELETE FROM submissions WHERE id = :sid"), {"sid": submission_id})
+    try:
+        db.execute(text(
+            "DELETE FROM fix_approvals WHERE submission_id = :sid"
+        ), {"sid": submission_id})
+        db.execute(text(
+            "DELETE FROM finding_reviews WHERE submission_id = :sid"
+        ), {"sid": submission_id})
+        db.execute(text(
+            "DELETE FROM compliance_decisions WHERE submission_id = :sid"
+        ), {"sid": submission_id})
+        db.execute(text(
+            "DELETE FROM processing_jobs WHERE submission_id = :sid"
+        ), {"sid": submission_id})
+        db.execute(text(
+            "DELETE FROM findings WHERE submission_id = :sid"
+        ), {"sid": submission_id})
+        db.execute(text(
+            "DELETE FROM document_versions WHERE submission_id = :sid"
+        ), {"sid": submission_id})
+        db.execute(text(
+            "DELETE FROM audit_events WHERE resource_type = 'submission' AND resource_id = :sid_str"
+        ), {"sid_str": str(submission_id)})
+        db.execute(text("DELETE FROM submissions WHERE id = :sid"), {"sid": submission_id})
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(500, f"Delete failed ({type(exc).__name__}: {exc})")
+
     audit(db, university_id, principal.subject, "SUBMISSION_DELETED", "university", university_id,
           result="deleted", metadata_json={"deleted_submission_id": submission_id})
     db.commit()

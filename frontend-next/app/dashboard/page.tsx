@@ -8,11 +8,12 @@ import {
   ApiError,
   createSubmission,
   listDocumentTypes,
+  listFaculties,
   listPublishedRuleSets,
   listSubmissions,
   listUniversities,
 } from "@/lib/api";
-import type { DocumentType, PublishedRuleSet, Submission, University } from "@/lib/types";
+import type { DocumentType, Faculty, PublishedRuleSet, Submission, University } from "@/lib/types";
 import { Button, AppShell, Panel, SectionHeading, StatusBadge } from "@/components/ui";
 import { useRouter } from "next/navigation";
 
@@ -66,6 +67,7 @@ export default function DashboardPage() {
                     <th className="px-4 py-3 font-medium">Registration #</th>
                     <th className="px-4 py-3 font-medium">Status</th>
                     <th className="px-4 py-3 font-medium">Findings</th>
+                    <th className="px-4 py-3 font-medium">Submitted</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -86,6 +88,12 @@ export default function DashboardPage() {
                         <StatusBadge status={s.status} />
                       </td>
                       <td className="px-4 py-3 text-muted">{s.findings_count}</td>
+                      <td className="px-4 py-3 text-muted whitespace-nowrap">
+                        {new Date(s.created_at).toLocaleString(undefined, {
+                          dateStyle: "medium",
+                          timeStyle: "short",
+                        })}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -102,8 +110,12 @@ export default function DashboardPage() {
 }
 
 function UploadPanel({ session, onCreated }: { session: NonNullable<ReturnType<typeof useRequireSession>>; onCreated: () => void }) {
+  const isStudent = hasRole(session, "student") && !hasRole(session, "research_officer", "university_admin", "super_admin");
+
   const [universities, setUniversities] = useState<University[]>([]);
   const [universityId, setUniversityId] = useState<number | null>(null);
+  const [faculties, setFaculties] = useState<Faculty[]>([]);
+  const [facultyId, setFacultyId] = useState<number | "">("");
   const [documentTypes, setDocumentTypes] = useState<DocumentType[]>([]);
   const [documentTypeId, setDocumentTypeId] = useState<number | "">("");
   const [ruleSets, setRuleSets] = useState<PublishedRuleSet[]>([]);
@@ -111,6 +123,7 @@ function UploadPanel({ session, onCreated }: { session: NonNullable<ReturnType<t
 
   const [studentName, setStudentName] = useState("");
   const [registrationNumber, setRegistrationNumber] = useState("");
+  const [programme, setProgramme] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<string | null>(null);
@@ -129,10 +142,12 @@ function UploadPanel({ session, onCreated }: { session: NonNullable<ReturnType<t
   useEffect(() => {
     if (!universityId) return;
     listDocumentTypes(session, universityId).then(setDocumentTypes);
+    if (!isStudent) listFaculties(session, universityId).then(setFaculties);
     listPublishedRuleSets(session, universityId).then((rows) => {
       setRuleSets(rows);
       setRuleSetId(rows.length > 0 ? rows[0].id : "");
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, universityId]);
 
   useEffect(() => {
@@ -140,36 +155,43 @@ function UploadPanel({ session, onCreated }: { session: NonNullable<ReturnType<t
     listPublishedRuleSets(
       session,
       universityId,
-      undefined,
+      facultyId || undefined,
       documentTypeId || undefined
     ).then((rows) => {
       setRuleSets(rows);
       setRuleSetId(rows.length > 0 ? rows[0].id : "");
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [documentTypeId]);
+  }, [facultyId, documentTypeId]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     setResult(null);
-    if (!universityId || !ruleSetId || !file) {
-      setError("University, rule set and file are all required.");
+    if (!universityId || !ruleSetId || !file || !documentTypeId) {
+      setError("University, document type, rule set, and file are all required.");
+      return;
+    }
+    if (!isStudent && (!studentName || !registrationNumber)) {
+      setError("Student name and registration number are required.");
       return;
     }
     setSubmitting(true);
     try {
       const created = await createSubmission(session, {
         universityId,
-        documentTypeId: documentTypeId || undefined,
+        facultyId: !isStudent && facultyId ? facultyId : undefined,
+        documentTypeId,
         ruleSetId,
-        studentName,
-        registrationNumber,
+        studentName: isStudent ? undefined : studentName,
+        registrationNumber: isStudent ? undefined : registrationNumber,
+        programme: !isStudent && programme ? programme : undefined,
         file,
       });
       setResult(`Submission #${created.id} created (${created.status}). Validation is running in the background.`);
       setStudentName("");
       setRegistrationNumber("");
+      setProgramme("");
       setFile(null);
       onCreated();
     } catch (err) {
@@ -206,41 +228,72 @@ function UploadPanel({ session, onCreated }: { session: NonNullable<ReturnType<t
                 </select>
               </Field>
             )}
-            <Field label="Student name">
-              <input
-                required
-                value={studentName}
-                onChange={(e) => setStudentName(e.target.value)}
-                className="focus-ring w-full border border-line bg-panel px-3 py-2 text-sm"
-              />
-            </Field>
-            <Field label="Registration number">
-              <input
-                required
-                value={registrationNumber}
-                onChange={(e) => setRegistrationNumber(e.target.value)}
-                className="focus-ring w-full border border-line bg-panel px-3 py-2 text-sm"
-              />
-            </Field>
-            <p className="text-xs text-muted -mt-2">
-              Programme and Faculty are taken from the student&apos;s account and don&apos;t need to be entered here.
-            </p>
-            {documentTypes.length > 0 && (
-              <Field label="Document type (optional)">
-                <select
-                  className="focus-ring w-full border border-line bg-panel px-3 py-2 text-sm"
-                  value={documentTypeId}
-                  onChange={(e) => setDocumentTypeId(e.target.value ? Number(e.target.value) : "")}
-                >
-                  <option value="">—</option>
-                  {documentTypes.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
+            {!isStudent && (
+              <>
+                <Field label="Student name">
+                  <input
+                    required
+                    value={studentName}
+                    onChange={(e) => setStudentName(e.target.value)}
+                    className="focus-ring w-full border border-line bg-panel px-3 py-2 text-sm"
+                  />
+                </Field>
+                <Field label="Registration number">
+                  <input
+                    required
+                    value={registrationNumber}
+                    onChange={(e) => setRegistrationNumber(e.target.value)}
+                    className="focus-ring w-full border border-line bg-panel px-3 py-2 text-sm"
+                  />
+                </Field>
+                <Field label="Programme (optional)">
+                  <input
+                    value={programme}
+                    onChange={(e) => setProgramme(e.target.value)}
+                    placeholder="e.g. PhD Computer Science"
+                    className="focus-ring w-full border border-line bg-panel px-3 py-2 text-sm"
+                  />
+                </Field>
+                {faculties.length > 0 && (
+                  <Field label="Faculty (optional)">
+                    <select
+                      className="focus-ring w-full border border-line bg-panel px-3 py-2 text-sm"
+                      value={facultyId}
+                      onChange={(e) => setFacultyId(e.target.value ? Number(e.target.value) : "")}
+                    >
+                      <option value="">—</option>
+                      {faculties.map((f) => (
+                        <option key={f.id} value={f.id}>
+                          {f.name}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
+              </>
             )}
+            {isStudent && (
+              <p className="text-xs text-muted -mt-2">
+                Your name, registration number, programme, and faculty are taken from your account.
+              </p>
+            )}
+            <Field label="Document type">
+              <select
+                required
+                className="focus-ring w-full border border-line bg-panel px-3 py-2 text-sm"
+                value={documentTypeId}
+                onChange={(e) => setDocumentTypeId(e.target.value ? Number(e.target.value) : "")}
+              >
+                <option value="" disabled>
+                  Select a document type
+                </option>
+                {documentTypes.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
             <Field label="Rule set">
               {ruleSets.length === 0 ? (
                 <p className="text-sm text-brick">No published rule set is available for this selection.</p>

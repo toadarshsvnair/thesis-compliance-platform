@@ -18,6 +18,7 @@ class User(Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     programme: Mapped[str | None] = mapped_column(String(250), nullable=True)
     faculty_id: Mapped[int | None] = mapped_column(ForeignKey("faculties.id"), nullable=True)
+    registration_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 class UserRole(Base):

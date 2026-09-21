@@ -1,6 +1,6 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from .models import RuleSet, Rule, University, User, UserRole, Faculty
+from .models import RuleSet, Rule, University, User, UserRole, Faculty, DocumentType
 from .config import settings
 from .security.passwords import hash_password
 
@@ -38,9 +38,19 @@ FACULTIES = [
     ("Faculty of Liberal Arts & Sciences", "FLAS", "apa"),
     ("Faculty of Law and Policy Studies", "FLPS", "apa_bluebook"),
 ]
+
+# The document types a submission can be -- shown as a required dropdown at
+# upload time (kept separate from Programme/Faculty, which now live on the
+# student's own account instead of being re-entered per upload).
+DOCUMENT_TYPES = [
+    ("Thesis Report", "THESIS"),
+    ("Synopsis", "SYNOPSIS"),
+]
 def seed(db: Session, university_id: int):
     for name, code, ref_style in FACULTIES:
         db.add(Faculty(university_id=university_id, name=name, code=code, active=True, reference_style=ref_style))
+    for name, code in DOCUMENT_TYPES:
+        db.add(DocumentType(university_id=university_id, name=name, code=code, active=True))
     rs = RuleSet(
         university_id=university_id,
         version="0.3-mvp",
@@ -70,6 +80,19 @@ def seed_faculties_if_missing(db: Session, university_id: int) -> None:
     for name, code, ref_style in FACULTIES:
         if name not in existing_names:
             db.add(Faculty(university_id=university_id, name=name, code=code, active=True, reference_style=ref_style))
+            added = True
+    if added:
+        db.commit()
+
+
+def seed_document_types_if_missing(db: Session, university_id: int) -> None:
+    """Same backfill pattern as seed_faculties_if_missing, for the
+    Thesis Report / Synopsis document types."""
+    existing_names = {d.name for d in db.scalars(select(DocumentType).where(DocumentType.university_id == university_id)).all()}
+    added = False
+    for name, code in DOCUMENT_TYPES:
+        if name not in existing_names:
+            db.add(DocumentType(university_id=university_id, name=name, code=code, active=True))
             added = True
     if added:
         db.commit()

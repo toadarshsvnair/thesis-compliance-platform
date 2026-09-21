@@ -89,6 +89,7 @@ def _serialize(db: Session, user: User) -> dict:
         "created_at": user.created_at,
         "programme": user.programme,
         "faculty_id": user.faculty_id,
+        "registration_number": user.registration_number,
         "roles": [{"role": r.role, "university_id": r.university_id} for r in roles],
     }
 
@@ -102,6 +103,7 @@ class CreateUserRequest(BaseModel):
     expires_at: datetime | None = None
     programme: str | None = Field(default=None, max_length=250)
     faculty_id: int | None = None
+    registration_number: str | None = Field(default=None, max_length=100)
 
     @field_validator("email")
     @classmethod
@@ -118,6 +120,7 @@ class UpdateUserRequest(BaseModel):
     programme: str | None = None
     faculty_id: int | None = None
     clear_faculty: bool = False
+    registration_number: str | None = None
 
 
 class ResetPasswordRequest(BaseModel):
@@ -180,6 +183,7 @@ def create_user(body: CreateUserRequest, db: Session = Depends(get_db), principa
         expires_at=body.expires_at,
         programme=body.programme,
         faculty_id=body.faculty_id,
+        registration_number=body.registration_number,
     )
     db.add(user)
     db.flush()
@@ -220,6 +224,8 @@ def update_user(user_id: int, body: UpdateUserRequest, db: Session = Depends(get
         user.expires_at = body.expires_at
     if body.programme is not None:
         user.programme = body.programme
+    if body.registration_number is not None:
+        user.registration_number = body.registration_number
     if body.clear_faculty:
         user.faculty_id = None
     elif body.faculty_id is not None:

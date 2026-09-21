@@ -344,6 +344,7 @@ function CreateUserModal({
   const [universityId, setUniversityId] = useState<number | "">(universities[0]?.id ?? "");
   const [programme, setProgramme] = useState("");
   const [facultyId, setFacultyId] = useState<number | "">("");
+  const [registrationNumber, setRegistrationNumber] = useState("");
   const [expiresAt, setExpiresAt] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -366,6 +367,7 @@ function CreateUserModal({
         expiresAt: expiresAt ? new Date(expiresAt).toISOString() : undefined,
         programme: programme || undefined,
         facultyId: facultyId || undefined,
+        registrationNumber: registrationNumber || undefined,
       });
       onCreated();
     } catch (e) {
@@ -420,6 +422,9 @@ function CreateUserModal({
         </Field>
         {role === "student" && (
           <>
+            <Field label="Registration number (optional)">
+              <input value={registrationNumber} onChange={(e) => setRegistrationNumber(e.target.value)} placeholder="e.g. PHD2024-0042" className="focus-ring w-full border border-line bg-paper px-3 py-2 text-sm rounded" />
+            </Field>
             <Field label="Programme (optional)">
               <input value={programme} onChange={(e) => setProgramme(e.target.value)} placeholder="e.g. PhD Computer Science" className="focus-ring w-full border border-line bg-paper px-3 py-2 text-sm rounded" />
             </Field>
@@ -458,6 +463,7 @@ function EditUserModal({
   const [displayName, setDisplayName] = useState(user.display_name ?? "");
   const [programme, setProgramme] = useState(user.programme ?? "");
   const [facultyId, setFacultyId] = useState<number | "">(user.faculty_id ?? "");
+  const [registrationNumber, setRegistrationNumber] = useState(user.registration_number ?? "");
   const [expiresAt, setExpiresAt] = useState(user.expires_at ? user.expires_at.slice(0, 10) : "");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -474,6 +480,7 @@ function EditUserModal({
         programme: programme || undefined,
         facultyId: facultyId || undefined,
         clearFaculty: facultyId === "",
+        registrationNumber: registrationNumber || undefined,
         expiresAt: expiresAt ? new Date(expiresAt).toISOString() : undefined,
         clearExpiry: expiresAt === "",
       });
@@ -502,6 +509,9 @@ function EditUserModal({
         </Field>
         {isStudent && (
           <>
+            <Field label="Registration number">
+              <input value={registrationNumber} onChange={(e) => setRegistrationNumber(e.target.value)} className="focus-ring w-full border border-line bg-paper px-3 py-2 text-sm rounded" />
+            </Field>
             <Field label="Programme">
               <input value={programme} onChange={(e) => setProgramme(e.target.value)} className="focus-ring w-full border border-line bg-paper px-3 py-2 text-sm rounded" />
             </Field>

@@ -71,6 +71,7 @@ export interface AdminUser {
   created_at: string;
   programme: string | null;
   faculty_id: number | null;
+  registration_number: string | null;
   roles: Array<{ role: string; university_id: number | null }>;
 }
 
@@ -81,7 +82,7 @@ export const listAdminUsers = (session: Session, universityId?: number) => {
 
 export const createAdminUser = (
   session: Session,
-  input: { email: string; password: string; displayName: string; role: string; universityId: number; expiresAt?: string; programme?: string; facultyId?: number }
+  input: { email: string; password: string; displayName: string; role: string; universityId: number; expiresAt?: string; programme?: string; facultyId?: number; registrationNumber?: string }
 ) =>
   request<AdminUser>(session, "/admin/users", {
     method: "POST",
@@ -94,13 +95,14 @@ export const createAdminUser = (
       expires_at: input.expiresAt || null,
       programme: input.programme || null,
       faculty_id: input.facultyId || null,
+      registration_number: input.registrationNumber || null,
     }),
   });
 
 export const updateAdminUser = (
   session: Session,
   userId: number,
-  patch: { displayName?: string; active?: boolean; role?: string; expiresAt?: string | null; clearExpiry?: boolean; programme?: string; facultyId?: number; clearFaculty?: boolean }
+  patch: { displayName?: string; active?: boolean; role?: string; expiresAt?: string | null; clearExpiry?: boolean; programme?: string; facultyId?: number; clearFaculty?: boolean; registrationNumber?: string }
 ) =>
   request<AdminUser>(session, `/admin/users/${userId}`, {
     method: "PATCH",
@@ -113,6 +115,7 @@ export const updateAdminUser = (
       programme: patch.programme,
       faculty_id: patch.facultyId,
       clear_faculty: patch.clearFaculty ?? false,
+      registration_number: patch.registrationNumber,
     }),
   });
 
@@ -247,8 +250,8 @@ export interface CreateSubmissionInput {
   facultyId?: number;
   documentTypeId?: number;
   ruleSetId: number;
-  studentName: string;
-  registrationNumber: string;
+  studentName?: string;
+  registrationNumber?: string;
   programme?: string;
   supervisor?: string;
   file: File;
@@ -260,8 +263,8 @@ export const createSubmission = (session: Session, input: CreateSubmissionInput)
   if (input.facultyId) fd.set("faculty_id", String(input.facultyId));
   if (input.documentTypeId) fd.set("document_type_id", String(input.documentTypeId));
   fd.set("rule_set_id", String(input.ruleSetId));
-  fd.set("student_name", input.studentName);
-  fd.set("registration_number", input.registrationNumber);
+  if (input.studentName) fd.set("student_name", input.studentName);
+  if (input.registrationNumber) fd.set("registration_number", input.registrationNumber);
   if (input.programme) fd.set("programme", input.programme);
   if (input.supervisor) fd.set("supervisor", input.supervisor);
   fd.set("file", input.file);

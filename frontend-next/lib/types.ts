@@ -47,6 +47,7 @@ export interface Submission {
   registration_number: string;
   current_version_id: number | null;
   findings_count: number;
+  created_at: string;
 }
 
 export interface Finding {

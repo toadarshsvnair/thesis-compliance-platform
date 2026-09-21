@@ -9,6 +9,7 @@ from ..models import Submission, DocumentVersion, Finding, AuditEvent, FindingRe
 from ..schemas_review import FindingReviewRequest, ComplianceDecisionRequest
 from ..services.audit import audit
 from ..services.review import compare_versions
+from ..services.autofix import SAFE_AUTO_FIX_RULES
 from ..security.dependencies import get_principal
 from ..security.authorization import authorize_submission
 
@@ -41,7 +42,10 @@ def review_summary(submission_id: int, db: Session = Depends(get_db), principal=
     counts = {}
     for f in findings:
         counts[f.severity] = counts.get(f.severity, 0) + 1
-    fixable = sum(1 for f in findings if f.auto_fix_allowed and f.status == "open")
+    fixable = sum(
+        1 for f in findings
+        if f.auto_fix_allowed and f.status == "open" and f.rule_id in SAFE_AUTO_FIX_RULES
+    )
     decisions = db.scalars(select(ComplianceDecision).where(
         ComplianceDecision.submission_id == s.id
     ).order_by(ComplianceDecision.created_at.desc())).all()

@@ -1,4 +1,5 @@
 from pydantic import BaseModel, Field
+from datetime import datetime
 
 class SubmissionCreate(BaseModel):
     university_id: int
@@ -17,6 +18,7 @@ class SubmissionOut(BaseModel):
     registration_number: str
     current_version_id: int | None = None
     findings_count: int = 0
+    created_at: datetime
 
     class Config:
         from_attributes = True
