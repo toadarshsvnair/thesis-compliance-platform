@@ -226,70 +226,27 @@ export default function SubmissionDetailPage() {
       <section className="mb-10">
         <SectionHeading>Findings</SectionHeading>
         {findings.length === 0 ? (
-          <p className="text-sm text-muted">No findings on the current version.</p>
-        ) : (
-          <Panel>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-line text-left text-xs uppercase tracking-wide text-muted">
-                  {canReview && <th className="px-4 py-3 w-8"></th>}
-                  <th className="px-4 py-3 font-medium">Rule</th>
-                  <th className="px-4 py-3 font-medium">Severity</th>
-                  <th className="px-4 py-3 font-medium">Location</th>
-                  <th className="px-4 py-3 font-medium">Message</th>
-                  <th className="px-4 py-3 font-medium">Status</th>
-                  {canReview && <th className="px-4 py-3 font-medium">Actions</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {findings.map((f) => (
-                  <tr key={f.id} className="border-b border-line last:border-0 align-top">
-                    {canReview && (
-                      <td className="px-4 py-3">
-                        <input
-                          type="checkbox"
-                          disabled={!f.auto_fix_allowed || f.status !== "open"}
-                          checked={selected.has(f.id)}
-                          onChange={() => toggleSelected(f.id)}
-                        />
-                      </td>
-                    )}
-                    <td className="px-4 py-3 font-mono text-xs">{f.rule_id}</td>
-                    <td className="px-4 py-3">
-                      <SeverityBadge severity={f.severity} />
-                    </td>
-                    <td className="px-4 py-3 text-muted">{f.location}</td>
-                    <td className="px-4 py-3">
-                      <p>{f.message}</p>
-                      <p className="text-xs text-muted mt-1">
-                        Expected: {f.expected} · Actual: {f.actual}
-                      </p>
-                      {f.source_reference && (
-                        <p className="text-xs text-muted italic mt-0.5">Guideline: {f.source_reference}</p>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <StatusBadge status={f.status} />
-                    </td>
-                    {canReview && (
-                      <td className="px-4 py-3">
-                        {f.status === "open" && (
-                          <div className="flex gap-2">
-                            <Button variant="ghost" onClick={() => handleReviewAction(f.id, "reviewed")}>
-                              Mark reviewed
-                            </Button>
-                            <Button variant="ghost" onClick={() => handleReviewAction(f.id, "waived")}>
-                              Waive
-                            </Button>
-                          </div>
-                        )}
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <Panel className="p-6 text-center">
+            <p className="text-sm text-muted">No findings on the current version.</p>
           </Panel>
+        ) : (
+          <>
+            <FindingsSummaryStrip findings={findings} />
+            <div className="space-y-3">
+              {[...findings]
+                .sort((a, b) => severityRank(a.severity) - severityRank(b.severity))
+                .map((f) => (
+                  <FindingCard
+                    key={f.id}
+                    finding={f}
+                    canReview={canReview}
+                    selected={selected.has(f.id)}
+                    onToggleSelected={() => toggleSelected(f.id)}
+                    onReviewAction={(action) => handleReviewAction(f.id, action)}
+                  />
+                ))}
+            </div>
+          </>
         )}
 
         {canReview && findings.some((f) => f.auto_fix_allowed && f.status === "open") && (
@@ -415,5 +372,108 @@ function Metric({ label, value }: { label: string; value: string }) {
       <p className="text-xs uppercase tracking-wide text-muted">{label}</p>
       <p className="text-lg font-serif text-ink capitalize">{value}</p>
     </div>
+  );
+}
+
+const SEVERITY_ORDER = ["Critical", "Major", "Review", "Minor"];
+function severityRank(severity: string): number {
+  const i = SEVERITY_ORDER.indexOf(severity);
+  return i === -1 ? SEVERITY_ORDER.length : i;
+}
+
+const SEVERITY_BORDER: Record<string, string> = {
+  Critical: "border-l-brick",
+  Major: "border-l-brick",
+  Review: "border-l-navy",
+  Minor: "border-l-ochre",
+};
+
+function FindingsSummaryStrip({ findings }: { findings: Finding[] }) {
+  const counts = new Map<string, number>();
+  for (const f of findings) counts.set(f.severity, (counts.get(f.severity) ?? 0) + 1);
+  const openCount = findings.filter((f) => f.status === "open").length;
+  return (
+    <div className="flex flex-wrap items-center gap-2 mb-4">
+      {[...SEVERITY_ORDER, ...[...counts.keys()].filter((s) => !SEVERITY_ORDER.includes(s))]
+        .filter((s) => counts.has(s))
+        .map((severity) => (
+          <span key={severity} className="inline-flex items-center gap-1.5">
+            <SeverityBadge severity={severity} />
+            <span className="text-sm text-muted">×{counts.get(severity)}</span>
+          </span>
+        ))}
+      <span className="text-sm text-muted ml-2">
+        {openCount} of {findings.length} still open
+      </span>
+    </div>
+  );
+}
+
+function FindingCard({
+  finding,
+  canReview,
+  selected,
+  onToggleSelected,
+  onReviewAction,
+}: {
+  finding: Finding;
+  canReview: boolean;
+  selected: boolean;
+  onToggleSelected: () => void;
+  onReviewAction: (action: "reviewed" | "waived") => void;
+}) {
+  const f = finding;
+  return (
+    <Panel className={`p-4 border-l-4 ${SEVERITY_BORDER[f.severity] ?? "border-l-line"}`}>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap">
+          {canReview && (
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              disabled={!f.auto_fix_allowed || f.status !== "open"}
+              checked={selected}
+              onChange={onToggleSelected}
+              title={f.auto_fix_allowed ? "Select for controlled auto-fix" : "Not eligible for automatic fixing"}
+            />
+          )}
+          <span className="font-mono text-xs text-muted bg-paper border border-line rounded px-1.5 py-0.5">{f.rule_id}</span>
+          <SeverityBadge severity={f.severity} />
+          <StatusBadge status={f.status} />
+        </div>
+        <span className="text-xs text-muted">{f.location}</span>
+      </div>
+
+      <p className="text-sm text-ink mt-3">{f.message}</p>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+        <div className="bg-paper border border-line rounded p-2.5">
+          <p className="text-[10px] uppercase tracking-wide text-muted mb-1">Expected</p>
+          <p className="text-sm text-ink">{f.expected}</p>
+        </div>
+        <div className="bg-paper border border-line rounded p-2.5">
+          <p className="text-[10px] uppercase tracking-wide text-muted mb-1">Actual</p>
+          <p className="text-sm text-ink">{f.actual}</p>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between mt-3 flex-wrap gap-2">
+        {f.source_reference ? (
+          <p className="text-xs text-muted italic">Guideline: {f.source_reference}</p>
+        ) : (
+          <span />
+        )}
+        {canReview && f.status === "open" && (
+          <div className="flex gap-2">
+            <Button variant="ghost" onClick={() => onReviewAction("reviewed")}>
+              Mark reviewed
+            </Button>
+            <Button variant="ghost" onClick={() => onReviewAction("waived")}>
+              Waive
+            </Button>
+          </div>
+        )}
+      </div>
+    </Panel>
   );
 }

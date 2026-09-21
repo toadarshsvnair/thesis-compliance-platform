@@ -11,6 +11,7 @@ from .api.ai import router as ai_router
 from .api.rules import router as rules_router
 from .api.universities import router as universities_router
 from .api.auth import router as auth_router
+from .api.admin_users import router as admin_users_router
 from .security.headers import SecurityHeadersMiddleware
 from .security.rate_limit import SimpleRateLimitMiddleware
 from .security.middleware import RequestSecurityMiddleware
@@ -72,6 +73,8 @@ def _backfill_new_columns():
         submission_columns = {c["name"] for c in inspector.get_columns("submissions")}
         if "owner_user_id" not in submission_columns:
             conn.execute(text("ALTER TABLE submissions ADD COLUMN owner_user_id INTEGER REFERENCES users(id)"))
+        if "expires_at" not in user_columns:
+            conn.execute(text("ALTER TABLE users ADD COLUMN expires_at TIMESTAMPTZ"))
 
 app.include_router(health_router,prefix="/api")
 app.include_router(submissions_router,prefix="/api")
@@ -81,8 +84,10 @@ app.include_router(ai_router,prefix="/api")
 app.include_router(rules_router,prefix="/api")
 app.include_router(universities_router,prefix="/api")
 app.include_router(auth_router,prefix="/api")
+app.include_router(admin_users_router,prefix="/api")
 app.include_router(metrics_router,prefix="/api")
 app.include_router(certificates_router,prefix="/api")
+app.include_router(evaluation_report_router,prefix="/api")
 
 @app.get("/review",include_in_schema=False)
 def review_dashboard(): return FileResponse("frontend/index.html",media_type="text/html")

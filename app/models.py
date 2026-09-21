@@ -15,6 +15,7 @@ class User(Base):
     display_name: Mapped[str | None] = mapped_column(String(250), nullable=True)
     password_hash: Mapped[str | None] = mapped_column(String(200), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 class UserRole(Base):

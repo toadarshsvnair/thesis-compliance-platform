@@ -60,6 +60,64 @@ async function request<T>(
   return text ? (JSON.parse(text) as T) : (undefined as T);
 }
 
+// ---- Admin: user management ----
+
+export interface AdminUser {
+  id: number;
+  email: string;
+  display_name: string | null;
+  active: boolean;
+  expires_at: string | null;
+  created_at: string;
+  roles: Array<{ role: string; university_id: number | null }>;
+}
+
+export const listAdminUsers = (session: Session, universityId?: number) => {
+  const qs = universityId ? `?university_id=${universityId}` : "";
+  return request<AdminUser[]>(session, `/admin/users${qs}`);
+};
+
+export const createAdminUser = (
+  session: Session,
+  input: { email: string; password: string; displayName: string; role: string; universityId: number; expiresAt?: string }
+) =>
+  request<AdminUser>(session, "/admin/users", {
+    method: "POST",
+    body: JSON.stringify({
+      email: input.email,
+      password: input.password,
+      display_name: input.displayName,
+      role: input.role,
+      university_id: input.universityId,
+      expires_at: input.expiresAt || null,
+    }),
+  });
+
+export const updateAdminUser = (
+  session: Session,
+  userId: number,
+  patch: { displayName?: string; active?: boolean; role?: string; expiresAt?: string | null; clearExpiry?: boolean }
+) =>
+  request<AdminUser>(session, `/admin/users/${userId}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      display_name: patch.displayName,
+      active: patch.active,
+      role: patch.role,
+      expires_at: patch.expiresAt,
+      clear_expiry: patch.clearExpiry ?? false,
+    }),
+  });
+
+export const resetAdminUserPassword = (session: Session, userId: number, newPassword: string) =>
+  request<{ status: string; email: string }>(session, `/admin/users/${userId}/reset-password`, {
+    method: "POST",
+    body: JSON.stringify({ new_password: newPassword }),
+  });
+
+export const deleteAdminUser = (session: Session, userId: number) =>
+  request<{ status: string; id: number }>(session, `/admin/users/${userId}`, { method: "DELETE" });
+
 // ---- Authentication ----
 
 export interface AuthResult {

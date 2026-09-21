@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from datetime import datetime, timezone
 from ..db import get_db
 from ..config import settings
 from ..models import User, UserRole
@@ -38,6 +39,7 @@ class RegisterRequest(BaseModel):
     display_name: str = Field(min_length=1, max_length=250)
     role: str
     university_id: int
+    expires_at: datetime | None = None
 
     @field_validator("email")
     @classmethod
@@ -88,6 +90,7 @@ def register(body: RegisterRequest, db: Session = Depends(get_db), principal: Pr
         display_name=body.display_name,
         password_hash=hash_password(body.password),
         active=True,
+        expires_at=body.expires_at,
     )
     db.add(user)
     db.flush()
@@ -106,8 +109,11 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
     user = db.scalar(select(User).where(User.email == body.email))
     # Deliberately identical error for "no such user" and "wrong password" --
     # distinguishing them lets an attacker enumerate which emails have
-    # accounts.
+    # accounts. Suspended and expired accounts get the same generic message
+    # for the same reason -- don't reveal *why* a login didn't work.
     if not user or not user.active or not user.password_hash or not verify_password(body.password, user.password_hash):
+        raise HTTPException(401, "Incorrect email or password.")
+    if user.expires_at and user.expires_at < datetime.now(timezone.utc):
         raise HTTPException(401, "Incorrect email or password.")
     roles, universities = _user_roles_and_universities(db, user)
     if not roles:

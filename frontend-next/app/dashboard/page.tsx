@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { useRequireSession } from "@/lib/use-session";
-import { clearSession, ROLE_LABELS } from "@/lib/session";
+import { clearSession, hasRole, ROLE_LABELS } from "@/lib/session";
 import {
   ApiError,
   createSubmission,
@@ -40,16 +40,23 @@ export default function DashboardPage() {
       <Masthead
         subtitle={`Signed in as ${session.displayName || session.email} · ${session.roles.map((r) => ROLE_LABELS[r]).join(", ")}`}
         right={
-          <Button
-            variant="ghost"
-            className="!text-paper hover:!underline"
-            onClick={() => {
-              clearSession();
-              router.replace("/login");
-            }}
-          >
-            Sign out
-          </Button>
+          <div className="flex items-center gap-4">
+            {hasRole(session, "university_admin", "super_admin") && (
+              <Button variant="ghost" className="!text-paper hover:!underline" onClick={() => router.push("/admin/users")}>
+                Manage users
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              className="!text-paper hover:!underline"
+              onClick={() => {
+                clearSession();
+                router.replace("/login");
+              }}
+            >
+              Sign out
+            </Button>
+          </div>
         }
       />
       <main className="max-w-5xl mx-auto px-6 py-10">
