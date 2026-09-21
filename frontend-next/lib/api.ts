@@ -332,6 +332,142 @@ export const evaluationReportUrl = (id: number) => `${API_BASE}/submissions/${id
 export const deleteSubmission = (session: Session, id: number) =>
   request<{ status: string; id: number }>(session, `/submissions/${id}`, { method: "DELETE" });
 
+// ---- Rule management ----
+
+export interface RuleSetSummary {
+  id: number;
+  name: string;
+  version: string;
+  status: "draft" | "in_review" | "published" | "retired";
+  faculty_id: number | null;
+  document_type_id: number | null;
+  created_at: string;
+}
+
+export interface RuleRow {
+  id: number;
+  rule_id: string;
+  category: string;
+  requirement: string;
+  validation_method: string;
+  severity: string;
+  auto_fix_allowed: boolean;
+  source_reference: string | null;
+  active: boolean;
+}
+
+export const listRuleSets = (session: Session, universityId: number) =>
+  request<RuleSetSummary[]>(session, `/rule-management/rule-sets?university_id=${universityId}`);
+
+export const createRuleSet = (
+  session: Session,
+  input: { universityId: number; version: string; name: string; facultyId?: number; documentTypeId?: number }
+) =>
+  request<{ id: number; status: string; version: string }>(session, "/rule-management/rule-sets", {
+    method: "POST",
+    body: JSON.stringify({
+      university_id: input.universityId,
+      version: input.version,
+      name: input.name,
+      faculty_id: input.facultyId ?? null,
+      document_type_id: input.documentTypeId ?? null,
+    }),
+  });
+
+export const listRulesInSet = (session: Session, ruleSetId: number) =>
+  request<RuleRow[]>(session, `/rule-management/rule-sets/${ruleSetId}/rules`);
+
+export const updateRuleSet = (
+  session: Session,
+  ruleSetId: number,
+  patch: { name?: string; facultyId?: number | null; documentTypeId?: number | null }
+) =>
+  request<{ id: number; status: string }>(session, `/rule-management/rule-sets/${ruleSetId}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      name: patch.name,
+      faculty_id: patch.facultyId,
+      document_type_id: patch.documentTypeId,
+    }),
+  });
+
+export const deleteRuleSet = (session: Session, ruleSetId: number) =>
+  request<{ status: string; id: number }>(session, `/rule-management/rule-sets/${ruleSetId}`, {
+    method: "DELETE",
+  });
+
+export const addRule = (
+  session: Session,
+  ruleSetId: number,
+  input: { ruleId: string; category: string; requirement: string; validationMethod: string; severity: string; autoFixAllowed: boolean; sourceReference?: string }
+) =>
+  request<{ id: number; rule_id: string }>(session, `/rule-management/rule-sets/${ruleSetId}/rules`, {
+    method: "POST",
+    body: JSON.stringify({
+      rule_id: input.ruleId,
+      category: input.category,
+      requirement: input.requirement,
+      validation_method: input.validationMethod,
+      severity: input.severity,
+      auto_fix_allowed: input.autoFixAllowed,
+      source_reference: input.sourceReference || null,
+    }),
+  });
+
+export const updateRule = (
+  session: Session,
+  ruleSetId: number,
+  rulePk: number,
+  patch: { category?: string; requirement?: string; validationMethod?: string; severity?: string; autoFixAllowed?: boolean; sourceReference?: string; active?: boolean }
+) =>
+  request<{ id: number; rule_id: string }>(session, `/rule-management/rule-sets/${ruleSetId}/rules/${rulePk}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      category: patch.category,
+      requirement: patch.requirement,
+      validation_method: patch.validationMethod,
+      severity: patch.severity,
+      auto_fix_allowed: patch.autoFixAllowed,
+      source_reference: patch.sourceReference,
+      active: patch.active,
+    }),
+  });
+
+export const bulkUploadRules = async (session: Session, ruleSetId: number, file: File) => {
+  const fd = new FormData();
+  fd.set("upload", file);
+  return request<{ added: number; rule_ids: string[] }>(session, `/rule-management/rule-sets/${ruleSetId}/rules/bulk-upload`, {
+    method: "POST",
+    body: fd,
+  });
+};
+
+export const submitRuleSetForReview = (session: Session, ruleSetId: number, comment: string) =>
+  request<{ id: number; status: string }>(session, `/rule-management/rule-sets/${ruleSetId}/submit-review`, {
+    method: "POST",
+    body: JSON.stringify({ comment }),
+  });
+
+export const publishRuleSet = (session: Session, ruleSetId: number, comment: string) =>
+  request<{ id: number; status: string; version: string }>(session, `/rule-management/rule-sets/${ruleSetId}/publish`, {
+    method: "POST",
+    body: JSON.stringify({ comment }),
+  });
+
+export const retireRuleSet = (session: Session, ruleSetId: number, comment: string) =>
+  request<{ id: number; status: string }>(session, `/rule-management/rule-sets/${ruleSetId}/retire`, {
+    method: "POST",
+    body: JSON.stringify({ comment }),
+  });
+
+export const cloneRuleSet = (session: Session, ruleSetId: number, version: string, name?: string) =>
+  request<{ id: number; status: string; version: string }>(session, `/rule-management/rule-sets/${ruleSetId}/clone`, {
+    method: "POST",
+    body: JSON.stringify({ version, name: name || null }),
+  });
+
+export const sampleTemplateUrl = () => `${API_BASE}/rule-management/sample-template`;
+
 // Plain <a href> links can't attach the X-User-* auth headers a browser
 // navigation needs, so downloads go through fetch() (which can) and then
 // simulate a click on the resulting blob instead.

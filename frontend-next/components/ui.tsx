@@ -51,6 +51,11 @@ const STATUS_STYLE: Record<string, string> = {
   fix_approved: "border-forest/40 text-forest bg-forest/5",
   fixed: "border-forest/50 text-forest bg-forest/10",
   revalidation_failed: "border-brick/50 text-brick bg-brick/10",
+  // Rule-set lifecycle statuses
+  draft: "border-line text-muted",
+  in_review: "border-ochre/50 text-ochre bg-ochre/10",
+  published: "border-forest/50 text-forest bg-forest/10",
+  retired: "border-brick/40 text-brick bg-brick/5",
 };
 
 export function StatusBadge({ status }: { status: string }) {
@@ -105,6 +110,7 @@ export function Modal({
 const NAV_ITEMS: { href: string; label: string; adminOnly?: boolean }[] = [
   { href: "/dashboard", label: "Submissions" },
   { href: "/admin/users", label: "Manage users", adminOnly: true },
+  { href: "/admin/rules", label: "Rule management", adminOnly: true },
 ];
 
 /** Persistent left-nav shell used on every authenticated page, replacing a

@@ -59,6 +59,7 @@ def review_summary(submission_id: int, db: Session = Depends(get_db), principal=
             "supervisor": s.supervisor,
             "status": s.status,
             "current_version_id": s.current_version_id,
+            "created_at": s.created_at,
         },
         "current_version": None if not current else {
             "id": current.id,

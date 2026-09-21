@@ -246,7 +246,10 @@ export default function SubmissionDetailPage() {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-5">
           <Metric label="Current version" value={summary.current_version ? `v${summary.current_version.version_number}` : "—"} />
           <Metric label="Total findings" value={String(summary.total_findings)} />
-          <Metric label="Fixable now" value={String(summary.fixable_open_findings)} />
+          <Metric
+            label="Submitted"
+            value={new Date(s.created_at).toLocaleDateString(undefined, { dateStyle: "medium" })}
+          />
           <Metric
             label="Decision"
             value={summary.latest_compliance_decision ? summary.latest_compliance_decision.decision.replace(/_/g, " ") : "Pending"}

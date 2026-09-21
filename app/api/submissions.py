@@ -1,7 +1,7 @@
 from pathlib import Path
 import json
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
-from sqlalchemy import select, func
+from sqlalchemy import select, func, text
 from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import Submission, DocumentVersion, Finding, RuleSet, ProcessingJob, User

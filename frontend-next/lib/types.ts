@@ -94,6 +94,7 @@ export interface ReviewSummary {
     supervisor: string | null;
     status: string;
     current_version_id: number | null;
+    created_at: string;
   };
   current_version: (DocumentVersion & { filename: string }) | null;
   finding_counts: Record<string, number>;
