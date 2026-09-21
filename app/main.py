@@ -9,6 +9,7 @@ from .api.fixes import router as fixes_router
 from .api.review import router as review_router
 from .api.ai import router as ai_router
 from .api.rules import router as rules_router
+from .api.universities import router as universities_router
 from .security.headers import SecurityHeadersMiddleware
 from .security.rate_limit import SimpleRateLimitMiddleware
 from .security.middleware import RequestSecurityMiddleware
@@ -51,6 +52,7 @@ app.include_router(fixes_router,prefix="/api")
 app.include_router(review_router,prefix="/api")
 app.include_router(ai_router,prefix="/api")
 app.include_router(rules_router,prefix="/api")
+app.include_router(universities_router,prefix="/api")
 app.include_router(metrics_router,prefix="/api")
 app.include_router(certificates_router,prefix="/api")
 

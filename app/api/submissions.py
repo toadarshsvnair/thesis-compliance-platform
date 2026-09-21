@@ -37,6 +37,43 @@ def _start_validation(db: Session, background_tasks: BackgroundTasks, university
     return "inline"
 
 
+@router.get("", response_model=list[SubmissionOut])
+def list_submissions(
+    university_id: int | None = None,
+    status: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    principal = Depends(get_principal),
+):
+    query = select(Submission)
+    if principal.has_role("super_admin"):
+        if university_id is not None:
+            query = query.where(Submission.university_id == university_id)
+    else:
+        if not principal.university_ids:
+            return []
+        allowed = set(principal.university_ids)
+        if university_id is not None:
+            if university_id not in allowed:
+                raise HTTPException(403, "University access denied.")
+            allowed = {university_id}
+        query = query.where(Submission.university_id.in_(allowed))
+    if status:
+        query = query.where(Submission.status == status)
+    query = query.order_by(Submission.id.desc()).offset(max(offset, 0)).limit(max(1, min(limit, 200)))
+    rows = db.scalars(query).all()
+    out = []
+    for s in rows:
+        count = db.scalar(select(func.count()).select_from(Finding).where(Finding.submission_id == s.id)) or 0
+        out.append(SubmissionOut(
+            id=s.id, status=s.status, student_name=s.student_name,
+            registration_number=s.registration_number,
+            current_version_id=s.current_version_id, findings_count=count,
+        ))
+    return out
+
+
 @router.post("", response_model=SubmissionOut)
 def create_submission(
     background_tasks: BackgroundTasks,
