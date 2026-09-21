@@ -124,11 +124,15 @@ function UploadPanel({ session, onCreated }: { session: NonNullable<ReturnType<t
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   useEffect(() => {
-    listUniversities(session).then((rows) => {
-      setUniversities(rows);
-      if (rows.length > 0) setUniversityId(rows[0].id);
-    });
+    listUniversities(session)
+      .then((rows) => {
+        setUniversities(rows);
+        if (rows.length > 0) setUniversityId(rows[0].id);
+      })
+      .catch((e) => setLoadError(e instanceof ApiError ? e.message : "Could not load universities."));
   }, [session]);
 
   useEffect(() => {
@@ -190,7 +194,9 @@ function UploadPanel({ session, onCreated }: { session: NonNullable<ReturnType<t
     <aside>
       <SectionHeading>New submission</SectionHeading>
       <Panel className="p-5">
-        {universities.length === 0 ? (
+                {loadError ? (
+          <p className="text-sm text-brick">{loadError}</p>
+        ) : universities.length === 0 ? (
           <p className="text-sm text-muted">
             No universities are configured for your account yet. A University Admin needs to set one up.
           </p>

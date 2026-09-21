@@ -25,7 +25,7 @@ if settings.environment.lower() in {"production","staging"} and not origins:
     raise RuntimeError("ALLOWED_ORIGINS must be configured outside development.")
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=hosts or ["*"])
 if origins:
-    app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True, allow_methods=["GET","POST","PUT","PATCH","DELETE","OPTIONS"], allow_headers=["Authorization","Content-Type","X-Request-ID"])
+    app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True, allow_methods=["GET","POST","PUT","PATCH","DELETE","OPTIONS"], allow_headers=["Authorization","Content-Type","X-Request-ID","X-User-Id","X-User-Email","X-User-Roles","X-University-Ids"])
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RequestSecurityMiddleware)
 app.add_middleware(SimpleRateLimitMiddleware, requests_per_minute=settings.rate_limit_per_minute)
