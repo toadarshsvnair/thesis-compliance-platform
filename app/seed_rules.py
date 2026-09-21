@@ -1,6 +1,8 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from .models import RuleSet, Rule, University
+from .models import RuleSet, Rule, University, User, UserRole
+from .config import settings
+from .security.passwords import hash_password
 
 # Initial Alliance University PhD thesis MVP catalogue.
 # This is intentionally a small seed; the full catalogue remains configurable
@@ -45,7 +47,7 @@ def seed(db: Session, university_id: int):
     db.commit()
     return rs
 
-def seed_demo_university_if_empty(db: Session) -> None:
+def seed_demo_university_if_empty(db: Session) -> University | None:
     """Create one demo University + published rule set for a fresh, empty
     deployment (e.g. a lightweight/free hosting demo with no admin UI yet to
     configure this by hand). No-op if any University already exists.
@@ -53,12 +55,39 @@ def seed_demo_university_if_empty(db: Session) -> None:
     Guarded by the DEMO_SEED setting (see app/config.py) — never runs unless
     explicitly enabled, and is meant for disposable demo data only.
     """
-    if db.scalar(select(University)):
-        return
+    existing = db.scalar(select(University))
+    if existing:
+        return existing
     uni = University(name="Demo University", code="DEMO")
     db.add(uni)
     db.flush()
     seed(db, uni.id)
+    return uni
+
+
+def seed_demo_admin_if_configured(db: Session, university_id: int) -> None:
+    """Creates exactly one Super Admin account so a fresh deployment isn't
+    locked out: since account creation now always requires an existing admin
+    (no open self-registration), a brand-new database has no admin to create
+    anyone with. Only runs when DEMO_ADMIN_PASSWORD is explicitly set --
+    render.yaml generates this as a real secret, never a hardcoded default,
+    since this becomes a genuine working login. No-op once any user exists,
+    so this never re-runs or resets the password on later restarts."""
+    if not settings.demo_admin_password:
+        return
+    if db.scalar(select(User)):
+        return
+    user = User(
+        external_subject=f"local:{settings.demo_admin_email}",
+        email=settings.demo_admin_email,
+        display_name="Demo Administrator",
+        password_hash=hash_password(settings.demo_admin_password),
+        active=True,
+    )
+    db.add(user)
+    db.flush()
+    db.add(UserRole(user_id=user.id, university_id=university_id, role="super_admin"))
+    db.commit()
 
 
 # v0.7 AI semantic rules (human-review only; no auto-fix)

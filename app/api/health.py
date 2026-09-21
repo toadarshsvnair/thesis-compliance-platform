@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 from ..db import get_db
 from ..config import settings
-from ..models import University, RuleSet
+from ..models import University, RuleSet, User, UserRole
+from ..security.dependencies import get_principal, get_principal_optional
+from ..security.identity import Principal
 
 router = APIRouter()
 
@@ -32,3 +34,42 @@ def dev_bootstrap(db: Session = Depends(get_db)):
         "rule_set_id": rule_set.id if rule_set else None,
         "rule_set_name": rule_set.name if rule_set else None,
     }
+
+
+@router.post("/dev/promote-to-super-admin")
+def promote_to_super_admin(email: str, db: Session = Depends(get_db), principal: Principal | None = Depends(get_principal_optional)):
+    """One-time bootstrap escape hatch: if a database somehow ends up with
+    zero super_admins (e.g. an account created before registration was
+    locked down to admin-only), this promotes one existing account -- but
+    only while no super_admin exists yet, or when called by an existing one.
+    Demo-mode-only."""
+    if not settings.demo_seed:
+        raise HTTPException(404, "Not found")
+    any_super_admin = db.scalar(select(UserRole).where(UserRole.role == "super_admin"))
+    if any_super_admin and not (principal and principal.has_role("super_admin")):
+        raise HTTPException(403, "A Super Admin already exists; ask them to grant access instead.")
+    user = db.scalar(select(User).where(User.email == email))
+    if not user:
+        raise HTTPException(404, "No account with that email exists yet.")
+    if not db.scalar(select(UserRole).where(UserRole.user_id == user.id, UserRole.role == "super_admin")):
+        db.add(UserRole(user_id=user.id, university_id=None, role="super_admin"))
+        db.commit()
+    return {"status": "promoted", "email": user.email}
+def reset_submissions(db: Session = Depends(get_db), principal=Depends(get_principal)):
+    """Clears all submissions and everything derived from them (versions,
+    findings, review actions, fix approvals, compliance decisions, processing
+    jobs, audit events) -- but leaves users, universities, and rule sets
+    untouched. Only available in demo mode, and only to an admin, since this
+    is a real, irreversible bulk delete."""
+    if not settings.demo_seed:
+        raise HTTPException(404, "Not found")
+    if not principal.has_role("university_admin", "super_admin"):
+        raise HTTPException(403, "Requires a University Admin or Super Admin role.")
+    tables = [
+        "fix_approvals", "finding_reviews", "compliance_decisions",
+        "processing_jobs", "findings", "document_versions", "submissions",
+        "audit_events",
+    ]
+    db.execute(text(f"TRUNCATE TABLE {', '.join(tables)} RESTART IDENTITY CASCADE"))
+    db.commit()
+    return {"status": "cleared", "tables": tables}

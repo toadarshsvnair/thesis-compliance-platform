@@ -181,7 +181,35 @@ Concretely: a navy masthead with a real (not fabricated) trust-mark strip — "A
 
 While preparing deployment instructions, I checked whether `app/api/auth.py`'s use of Pydantic's `EmailStr` type would actually work — it wouldn't have. `EmailStr` requires a separate `email-validator` package that isn't in `requirements.txt`; Pydantic raises an `ImportError` at import time when it's missing, which would have taken down the *entire* API on next deploy, not just registration (since `main.py` imports this module). Replaced with a plain stdlib regex validation (`app/api/auth.py`), consistent with the same "no untested new dependencies" reasoning already applied to password hashing. Verified the regex logic directly against realistic and malformed email addresses before shipping it.
 
-## 9. Path to the "Proper" Production Web Application
+## 9. Student Ownership, Fix-Apply Diagnosis, and Data Reset
+
+### Student submission ownership — the Phase 1 gap, actually closed
+
+Phase 1 found that `authorize_submission()` unconditionally rejected any principal with the `student` role, since there was no ownership mapping in the schema. Closed now: `Submission.owner_user_id` (new column, migration `0005_submission_owner.py`) links each submission to the real account that created it. `authorize_submission()` now enforces: a student sees only their own submissions; Research Officer, University Admin, and Super Admin continue to see everything within their scope, unchanged.
+
+**Tested directly**, not just read through — verified all six cases: a student viewing their own submission (allowed), a student viewing another student's (denied), a Research Officer viewing any submission at their university (allowed), an admin from a *different* university (denied — tenant isolation intact), a Super Admin (allowed), and a dev-header-based principal with no real account (denied — fails closed rather than guessing).
+
+### Apply-fix failing — likely cause identified, needs one confirmation
+
+Re-read the entire fix-apply code path looking for what could be broken. The most likely explanation isn't a code bug: **Render's free tier wipes the web service's local disk on every restart**, and free instances spin down after 15 minutes idle. Every uploaded document lives only on that local disk (`version.storage_path`) — there's no durable copy anywhere, since the object-storage fallback also just writes to the same local, ephemeral disk when real S3 isn't configured (it isn't, in this deployment). So: upload a thesis, wait more than 15 minutes (easily done while troubleshooting something else), and the original file is simply gone by the time "Apply Fix" tries to read it back — which throws an error that gets caught and reported as a generic 500.
+
+This needs one confirmation before treating it as solved: **does applying a fix work on a submission uploaded moments ago, in the same sitting** (no long gaps)? If yes, this diagnosis is confirmed, and the real fix is durable storage (a paid persistent disk, or real external S3-compatible storage like Cloudflare R2) — not a code patch, since there's currently no surviving copy of the file to fix code around.
+
+### Clearing test data without needing a local database client
+
+Added `POST /api/dev/reset-submissions` — clears submissions and everything derived from them (versions, findings, review actions, fix approvals, decisions, audit events) while leaving accounts, universities, and rule sets untouched. Demo-mode-only, admin-role-gated. Callable with `curl`, no local `psql` install needed.
+
+## 10. Locking Down Registration to Admin-Only
+
+Removed self-registration from the login page entirely — accounts are now created by a University Admin or Super Admin, matching how a real institution actually provisions accounts, not an open sign-up form. This closes a real looseness from the previous session (anyone could self-register as any role, including Super Admin, in demo mode).
+
+This creates a genuine bootstrapping problem worth naming clearly: if account creation always requires an existing admin, a brand-new database has no admin to create anyone with. Solved two ways:
+- **Automatic first-admin seeding**: on startup, if `DEMO_ADMIN_PASSWORD` is set (generated as a real secret in `render.yaml`, never hardcoded) and no user exists yet, one Super Admin account is created automatically.
+- **A one-time promotion escape hatch** (`POST /api/dev/promote-to-super-admin`) for the specific edge case of already having a non-admin account from before this change — self-limiting: only works while zero Super Admins exist, or when called by one that already exists.
+
+Login page also restyled to a simpler, single centered card (no tabs, no explanatory paragraph) per your reference design.
+
+## 11. Path to the "Proper" Production Web Application
 
 The handoff's own `CLAUDE_HANDOFF_PROMPT.md` lays out eight phases. Here's where each one actually stands after this work:
 
@@ -210,7 +238,7 @@ Each remaining phase (real OIDC, admin frontend screens, infrastructure) is a su
 
 ---
 
-## 10. Files Changed in This Work
+## 12. Files Changed in This Work
 
 All delivered as a complete, ready-to-push repository:
 

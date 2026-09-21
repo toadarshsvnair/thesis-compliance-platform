@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     s3_region: str = "us-east-1"
     processing_worker_required: bool = False
     demo_seed: bool = False
+    demo_admin_email: str = "admin@demo.edu"
+    demo_admin_password: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=False)
 

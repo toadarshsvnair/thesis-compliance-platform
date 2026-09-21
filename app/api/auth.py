@@ -72,14 +72,13 @@ def _user_roles_and_universities(db: Session, user: User) -> tuple[list[str], li
 def register(body: RegisterRequest, db: Session = Depends(get_db), principal: Principal | None = Depends(get_principal_optional)):
     if body.role not in VALID_ROLES:
         raise HTTPException(400, f"role must be one of {sorted(VALID_ROLES)}")
-    if not settings.demo_seed:
-        # Outside demo mode, only an existing admin can create accounts for
-        # others -- open self-registration is a demo-only convenience.
-        if not principal or not principal.has_role("university_admin", "super_admin"):
-            raise HTTPException(
-                403,
-                "Account creation requires an existing University Admin or Super Admin outside of demo mode.",
-            )
+    # Account creation always requires an existing University Admin or Super
+    # Admin -- there is no open self-registration, in demo mode or otherwise.
+    # The very first admin account for a fresh deployment is instead seeded
+    # automatically on startup (see app/seed_rules.py's
+    # seed_demo_admin_if_configured, driven by DEMO_ADMIN_EMAIL/PASSWORD).
+    if not principal or not principal.has_role("university_admin", "super_admin"):
+        raise HTTPException(403, "Account creation requires an existing University Admin or Super Admin.")
     if db.scalar(select(User).where(User.email == body.email)):
         raise HTTPException(409, "An account with this email already exists.")
 

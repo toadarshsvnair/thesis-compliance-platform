@@ -42,10 +42,12 @@ def startup():
         _backfill_new_columns()
     if settings.demo_seed:
         from .db import SessionLocal
-        from .seed_rules import seed_demo_university_if_empty
+        from .seed_rules import seed_demo_university_if_empty, seed_demo_admin_if_configured
         db = SessionLocal()
         try:
-            seed_demo_university_if_empty(db)
+            uni = seed_demo_university_if_empty(db)
+            if uni:
+                seed_demo_admin_if_configured(db, uni.id)
         finally:
             db.close()
 
@@ -67,6 +69,9 @@ def _backfill_new_columns():
         finding_columns = {c["name"] for c in inspector.get_columns("findings")}
         if "source_reference" not in finding_columns:
             conn.execute(text("ALTER TABLE findings ADD COLUMN source_reference VARCHAR(300)"))
+        submission_columns = {c["name"] for c in inspector.get_columns("submissions")}
+        if "owner_user_id" not in submission_columns:
+            conn.execute(text("ALTER TABLE submissions ADD COLUMN owner_user_id INTEGER REFERENCES users(id)"))
 
 app.include_router(health_router,prefix="/api")
 app.include_router(submissions_router,prefix="/api")

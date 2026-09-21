@@ -82,6 +82,7 @@ class Submission(Base):
     faculty_id: Mapped[int | None] = mapped_column(ForeignKey("faculties.id"), nullable=True)
     document_type_id: Mapped[int | None] = mapped_column(ForeignKey("document_types.id"), nullable=True)
     rule_set_id: Mapped[int] = mapped_column(ForeignKey("rule_sets.id"), index=True)
+    owner_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     student_name: Mapped[str] = mapped_column(String(250))
     registration_number: Mapped[str] = mapped_column(String(100))
     programme: Mapped[str | None] = mapped_column(String(250), nullable=True)

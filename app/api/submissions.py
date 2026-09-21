@@ -12,7 +12,7 @@ from ..services.object_storage import ObjectStorage
 from ..services.security import validate_magic, validate_docx_package, malware_scan
 from ..services.audit import audit
 from ..security.dependencies import get_principal, require_university_access
-from ..security.authorization import authorize_submission
+from ..security.authorization import authorize_submission, _principal_user_id
 
 router = APIRouter(prefix="/submissions", tags=["submissions"])
 storage = StorageService()
@@ -59,6 +59,11 @@ def list_submissions(
                 raise HTTPException(403, "University access denied.")
             allowed = {university_id}
         query = query.where(Submission.university_id.in_(allowed))
+        # A student sees only their own submissions; every other role sees
+        # everything within the university/universities above.
+        if principal.has_role("student") and not principal.has_role("research_officer", "university_admin"):
+            owner_id = _principal_user_id(principal)
+            query = query.where(Submission.owner_user_id == (owner_id if owner_id is not None else -1))
     if status:
         query = query.where(Submission.status == status)
     query = query.order_by(Submission.id.desc()).offset(max(offset, 0)).limit(max(1, min(limit, 200)))
@@ -106,6 +111,7 @@ def create_submission(
         faculty_id=faculty_id,
         document_type_id=document_type_id,
         rule_set_id=rule_set_id,
+        owner_user_id=_principal_user_id(principal),
         student_name=student_name,
         registration_number=registration_number,
         programme=programme,

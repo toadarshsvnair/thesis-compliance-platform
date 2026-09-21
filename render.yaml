@@ -32,6 +32,10 @@ services:
         value: development
       - key: DEMO_SEED
         value: "true"
+      - key: DEMO_ADMIN_EMAIL
+        value: "admin@demo.edu"
+      - key: DEMO_ADMIN_PASSWORD
+        generateValue: true
       - key: PORT
         value: "8000"
       - key: SECRET_KEY
