@@ -42,6 +42,7 @@ class Faculty(Base):
     name: Mapped[str] = mapped_column(String(200))
     code: Mapped[str] = mapped_column(String(50))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    reference_style: Mapped[str | None] = mapped_column(String(50), nullable=True)
     university = relationship("University")
 
 class DocumentType(Base):

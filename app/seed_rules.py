@@ -1,6 +1,6 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from .models import RuleSet, Rule, University, User, UserRole
+from .models import RuleSet, Rule, University, User, UserRole, Faculty
 from .config import settings
 from .security.passwords import hash_password
 
@@ -26,8 +26,21 @@ RULES = [
     ("XREF-002","Cross-reference","Broken figure references","deterministic","Major",False,"Institutional rule"),
     ("TOC-002","TOC","TOC page numbers correspond to rendered document","rendered","Major",True,"Annexure 19"),
     ("REF-002","References","Reference hanging indent and spacing","deterministic","Major",True,"Annexure 19"),
+    ("REF-003","References","Reference list matches the faculty's required citation style","pattern-based","Review",False,"Faculty reference-style requirement"),
+]
+
+# The four real faculties for this deployment, each with the citation style
+# its rule set checks references against (REF-003). Codes match
+# engine.REFERENCE_STYLE_LABELS exactly -- keep these in sync.
+FACULTIES = [
+    ("Faculty of Engineering Technology", "FET", "chicago_author_date"),
+    ("Faculty of Management Studies", "FMS", "apa"),
+    ("Faculty of Liberal Arts & Sciences", "FLAS", "apa"),
+    ("Faculty of Law and Policy Studies", "FLPS", "apa_bluebook"),
 ]
 def seed(db: Session, university_id: int):
+    for name, code, ref_style in FACULTIES:
+        db.add(Faculty(university_id=university_id, name=name, code=code, active=True, reference_style=ref_style))
     rs = RuleSet(
         university_id=university_id,
         version="0.3-mvp",
@@ -46,6 +59,21 @@ def seed(db: Session, university_id: int):
         ))
     db.commit()
     return rs
+
+def seed_faculties_if_missing(db: Session, university_id: int) -> None:
+    """Backfill for a university that already existed before these four
+    faculties and their reference styles were introduced -- adds only the
+    ones missing by name, so it's safe to run on every startup and never
+    duplicates or overwrites a faculty someone has since edited."""
+    existing_names = {f.name for f in db.scalars(select(Faculty).where(Faculty.university_id == university_id)).all()}
+    added = False
+    for name, code, ref_style in FACULTIES:
+        if name not in existing_names:
+            db.add(Faculty(university_id=university_id, name=name, code=code, active=True, reference_style=ref_style))
+            added = True
+    if added:
+        db.commit()
+
 
 def seed_demo_university_if_empty(db: Session) -> University | None:
     """Create one demo University + published rule set for a fresh, empty

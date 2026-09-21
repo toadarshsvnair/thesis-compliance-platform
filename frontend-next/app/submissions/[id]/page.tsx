@@ -27,6 +27,12 @@ import { Button, AppShell, Modal, Panel, SectionHeading, SeverityBadge, StatusBa
 
 const REVIEW_ROLES = ["research_officer", "university_admin", "super_admin"] as const;
 
+// Controlled auto-fix (Preview/Apply) is disabled for this version -- the free-tier
+// hosting's local disk is wiped on every restart, so an uploaded document can be
+// gone by the time a fix is attempted, which surfaces as an opaque failure. Turn
+// this back on once durable storage is in place.
+const AUTO_FIX_ENABLED = false;
+
 export default function SubmissionDetailPage() {
   const session = useRequireSession();
   const params = useParams<{ id: string }>();
@@ -267,6 +273,7 @@ export default function SubmissionDetailPage() {
                     key={f.id}
                     finding={f}
                     canReview={canReview}
+                    showFixCheckbox={AUTO_FIX_ENABLED && canReview}
                     selected={selected.has(f.id)}
                     onToggleSelected={() => toggleSelected(f.id)}
                     onReviewAction={(action) => handleReviewAction(f.id, action)}
@@ -276,7 +283,7 @@ export default function SubmissionDetailPage() {
           </>
         )}
 
-        {canReview && findings.some((f) => f.auto_fix_allowed && f.status === "open") && (
+        {AUTO_FIX_ENABLED && canReview && findings.some((f) => f.auto_fix_allowed && f.status === "open") && (
           <div className="mt-4 flex items-center gap-3">
             <Button variant="secondary" disabled={selected.size === 0 || busy} onClick={handlePreview}>
               Preview selected fixes
@@ -463,12 +470,14 @@ function FindingsSummaryStrip({ findings }: { findings: Finding[] }) {
 function FindingCard({
   finding,
   canReview,
+  showFixCheckbox,
   selected,
   onToggleSelected,
   onReviewAction,
 }: {
   finding: Finding;
   canReview: boolean;
+  showFixCheckbox: boolean;
   selected: boolean;
   onToggleSelected: () => void;
   onReviewAction: (action: "reviewed" | "waived") => void;
@@ -478,7 +487,7 @@ function FindingCard({
     <Panel className={`p-4 border-l-4 ${SEVERITY_BORDER[f.severity] ?? "border-l-line"}`}>
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2 flex-wrap">
-          {canReview && (
+          {showFixCheckbox && (
             <input
               type="checkbox"
               className="mt-0.5"

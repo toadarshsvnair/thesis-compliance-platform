@@ -9,7 +9,7 @@ from ..schemas import SubmissionOut
 from ..config import settings
 from ..services.storage import StorageService
 from ..services.object_storage import ObjectStorage
-from ..services.security import validate_magic, validate_docx_package, malware_scan
+from ..services.security import validate_magic, validate_docx_package, validate_pdf_package, malware_scan
 from ..services.audit import audit
 from ..security.dependencies import get_principal, require_university_access
 from ..security.authorization import authorize_submission, _principal_user_id
@@ -114,8 +114,9 @@ def create_submission(
         raise HTTPException(400, "Rule set is not mapped to the selected faculty.")
     if rule_set.document_type_id is not None and rule_set.document_type_id != document_type_id:
         raise HTTPException(400, "Rule set is not mapped to the selected document type.")
-    if not file.filename or not file.filename.lower().endswith(".docx"):
-        raise HTTPException(400, "Only DOCX uploads are supported.")
+    if not file.filename or not file.filename.lower().endswith((".docx", ".pdf")):
+        raise HTTPException(400, "Only DOCX or PDF uploads are supported.")
+    is_pdf = file.filename.lower().endswith(".pdf")
     submission = Submission(
         university_id=university_id,
         faculty_id=effective_faculty_id,
@@ -144,12 +145,12 @@ def create_submission(
     db.flush()
 
     path, size, digest = storage.save_upload(file.file, submission.id, 1, file.filename)
-    if not validate_magic(path):
+    if not validate_magic(path, file.filename):
         Path(path).unlink(missing_ok=True)
         db.rollback()
-        raise HTTPException(400, "Uploaded file is not a valid DOCX package.")
+        raise HTTPException(400, "Uploaded file is not a valid DOCX or PDF.")
     try:
-        package = validate_docx_package(path)
+        package = validate_pdf_package(path) if is_pdf else validate_docx_package(path)
         scan = malware_scan(path)
     except Exception as exc:
         Path(path).unlink(missing_ok=True)

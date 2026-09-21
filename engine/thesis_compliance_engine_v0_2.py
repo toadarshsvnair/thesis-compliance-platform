@@ -74,6 +74,72 @@ def norm(s):
 def inches(v):
     return None if v is None else float(v) / 914400.0
 
+def effective_paragraph_format_value(paragraph, attr_name, fall_back_to_normal=True):
+    """The paragraph-format value that will actually apply, falling through
+    from the paragraph's own direct setting to its style chain (up through
+    base styles) when the paragraph itself doesn't override it directly --
+    the same kind of inheritance already handled for run fonts
+    (effective_run_font_name), now applied to indentation/spacing
+    properties. These are just as commonly set once on a style (e.g. a
+    custom "Reference Entry" style's hanging indent, confirmed against a
+    real thesis) as repeated on every paragraph; checking only the direct
+    paragraph value reports a correctly-styled paragraph as having no
+    indent/spacing at all.
+
+    fall_back_to_normal governs whether to keep falling through to the
+    Normal style specifically when the paragraph's own style chain runs out
+    without setting a value (python-docx exposes no base_style at all for
+    some real styles, e.g. a thesis's "Chapter Body Text" -- Word still
+    treats Normal as the implicit parent there). This is the right call for
+    a property meant to be document-wide by default, like font name or
+    paragraph spacing (both confirmed correct against a real thesis this
+    way). It is the WRONG call for line spacing specifically: a style like
+    "Reference Entry" deliberately leaving line spacing unset does not mean
+    "inherit the body text's double spacing" -- references are
+    conventionally single-spaced regardless of body spacing, so falling
+    through to Normal's spacing there produced a confident but wrong
+    answer. Callers checking line spacing on anything other than plain
+    body text should pass False."""
+    value = getattr(paragraph.paragraph_format, attr_name, None)
+    if value is not None:
+        return value
+    style = paragraph.style
+    seen = set()
+    while style is not None and id(style) not in seen:
+        seen.add(id(style))
+        style_value = getattr(style.paragraph_format, attr_name, None)
+        if style_value is not None:
+            return style_value
+        style = getattr(style, "base_style", None)
+    if fall_back_to_normal:
+        try:
+            normal = paragraph.part.document.styles["Normal"]
+            normal_value = getattr(normal.paragraph_format, attr_name, None)
+            if normal_value is not None:
+                return normal_value
+        except (KeyError, AttributeError):
+            pass
+    return None
+
+def line_spacing_multiple(paragraph, fall_back_to_normal=False):
+    """Line spacing as a float multiplier (1.0 = single, 2.0 = double),
+    resolved through the paragraph's style chain (see
+    effective_paragraph_format_value), or None when it can't be determined
+    this way -- unset/inherited with no style setting it either, or an
+    exact-point spacing value (a Length, not a multiplier; Length is
+    actually an int subclass in python-docx, so it must be excluded
+    explicitly rather than relying on isinstance(x, (int, float))).
+    Defaults to NOT falling through to Normal -- see
+    effective_paragraph_format_value's docstring for why that matters
+    specifically for line spacing. Pass True only when checking plain body
+    text, where inheriting the document's general spacing is actually the
+    correct question to ask."""
+    from docx.shared import Length
+    ls = effective_paragraph_format_value(paragraph, "line_spacing", fall_back_to_normal=fall_back_to_normal)
+    if ls is None or isinstance(ls, Length):
+        return None
+    return float(ls)
+
 def add(findings, rule_id, category, severity, location, expected, actual,
         message, auto_fix=False, confidence=1.0, basis="Annexure 18/19"):
     findings.append({
@@ -144,15 +210,72 @@ def document_text(doc):
                     parts.append(txt)
     return "\n".join(x for x in parts if x)
 
+def find_list_section_range(paras_with_text, heading_norms):
+    """The [start, end) index range (into the given sequence) covered by a
+    preliminary "List of X" index page -- identified by its heading text,
+    ending at the next stopper heading (another List-of-X, Abstract,
+    References, or a Chapter heading) or the end of the sequence.
+
+    `paras_with_text` is a sequence of (norm_text) strings in document
+    order, matching the caller's own indexing scheme -- kept as a parameter
+    rather than assuming a specific paragraph list, since different callers
+    here use different sequences (doc.paragraphs vs. a mixed
+    paragraph+table body sequence) with different indices."""
+    start = None
+    for i, t in enumerate(paras_with_text):
+        if t in heading_norms:
+            start = i
+            break
+    if start is None:
+        return None
+    stoppers = {"list of tables", "list of figures", "list of abbreviations",
+                "list of appendices", "abstract", "references", "bibliography"}
+    end = len(paras_with_text)
+    for j in range(start + 1, len(paras_with_text)):
+        tj = paras_with_text[j]
+        if tj and (tj in stoppers or re.match(r"^chapter\s+\d+\b", tj)):
+            end = j
+            break
+    return (start, end)
+
+
 def parse_captions_and_body_refs(doc):
+    """A "List of Tables"/"List of Figures" preliminary page lists every
+    caption together as an index -- correctly, with no table or figure
+    immediately after each line, and naturally repeating each number that
+    also appears for real later in the body. That is not "the caption for
+    this table" that TAB-001/002/005 (etc.) mean, so those index-page
+    occurrences are excluded here rather than double-counted alongside the
+    real body occurrence (which previously produced both false "caption not
+    positioned near its table" findings on the index page, and doubled-up
+    "not referenced" findings from counting the same missing reference
+    once per occurrence).
+
+    Caption text is read via element_paragraph_text (all descendant w:t
+    nodes) rather than Paragraph.text, because Word's native "Insert
+    Caption" feature generates the sequence number via a SEQ field (wrapped
+    in w:fldSimple); Paragraph.text only aggregates direct-child runs and
+    silently drops that field's text, truncating e.g. "Table 2.1" to
+    "Table 2." -- which then fails to match a table/figure number pattern
+    at all. Caught by testing against a real thesis using native Word
+    captions, not a synthetic one built without fields."""
     captions = {"table": [], "figure": []}
     refs = {"table": set(), "figure": set()}
     paras = list(doc.paragraphs)
+    para_norms = [norm(element_paragraph_text(p._element)) for p in paras]
+    excluded = [r for r in (
+        find_list_section_range(para_norms, {"list of tables"}),
+        find_list_section_range(para_norms, {"list of figures"}),
+    ) if r]
+
+    def in_excluded_range(idx0):
+        return any(s <= idx0 < e for s, e in excluded)
+
     for idx, p in enumerate(paras, 1):
-        t = clean(p.text)
+        t = clean(element_paragraph_text(p._element))
         for kind in ("table", "figure"):
             n = caption_number(t, kind)
-            if n:
+            if n and not in_excluded_range(idx - 1):
                 captions[kind].append((n, idx, p))
         # Avoid counting a caption as its own body reference.
         body = t
@@ -218,7 +341,86 @@ def parse_references(doc):
     refs = [(i+1, p) for i, p in enumerate(doc.paragraphs[refs_start:refs_end], refs_start) if clean(p.text)]
     return refs_start, refs
 
-def validate(path, rendered_pdf=None):
+# Reference-style checkpoint (REF-003): which citation style a faculty
+# requires, and pattern-level signals used to check for a clear mismatch.
+# Deliberately conservative -- APA and Chicago Author-Date are both
+# parenthetical author-date systems and genuinely hard to tell apart by
+# pattern alone, so they are treated as one detectable family here; this
+# only flags a *clear* mismatch (e.g. numbered/Vancouver-style or legal
+# citations where an author-date style was expected), never a hard
+# pass/fail on the APA-vs-Chicago distinction itself. Always Review
+# severity: a human confirms the actual style, this only flags a concern.
+REFERENCE_STYLE_LABELS = {
+    "apa": "APA (latest edition)",
+    "chicago_author_date": "Chicago Author-Date",
+    "apa_bluebook": "APA/Bluebook (latest edition)",
+}
+_RE_COMMA_AUTHOR_YEAR = re.compile(r"\([A-Z][A-Za-z\-']+(?:\s+(?:et al\.|&|and)\s+[A-Z][A-Za-z\-']+)?,\s+\d{4}[a-z]?\)")
+_RE_NOCOMMA_AUTHOR_YEAR = re.compile(r"\([A-Z][A-Za-z\-']+\s+\d{4}[a-z]?\)")
+_RE_NUMBERED_CITATION = re.compile(r"\[\d{1,3}\]")
+_RE_BLUEBOOK_MARKERS = re.compile(r"\bv\.\s|§|F\.\s?(2d|3d|4th)\b|F\.\s?Supp|U\.S\.\s+\d|S\.\s?Ct\.|L\.\s?Ed\.\b")
+
+def check_reference_style(body_text, expected_style):
+    """Returns a dict {ok, reason, signals} or None if there's nothing to check
+    (no expected style configured for this faculty)."""
+    if not expected_style or expected_style not in REFERENCE_STYLE_LABELS:
+        return None
+    signals = {
+        "comma_author_year": len(_RE_COMMA_AUTHOR_YEAR.findall(body_text)),
+        "nocomma_author_year": len(_RE_NOCOMMA_AUTHOR_YEAR.findall(body_text)),
+        "numbered_citation": len(_RE_NUMBERED_CITATION.findall(body_text)),
+        "bluebook_markers": len(_RE_BLUEBOOK_MARKERS.findall(body_text)),
+    }
+    parenthetical_total = signals["comma_author_year"] + signals["nocomma_author_year"]
+
+    if expected_style == "apa_bluebook":
+        if parenthetical_total == 0 and signals["bluebook_markers"] == 0:
+            return {"ok": False, "signals": signals,
+                    "reason": "No APA-style parenthetical citations or Bluebook legal-citation markers were detected."}
+        return {"ok": True, "signals": signals}
+
+    if parenthetical_total == 0 and (signals["numbered_citation"] > 0 or signals["bluebook_markers"] > 0):
+        other = "numbered/Vancouver-style" if signals["numbered_citation"] > signals["bluebook_markers"] else "legal (Bluebook-style)"
+        return {"ok": False, "signals": signals,
+                "reason": f"In-text citations appear to use a {other} format rather than the expected "
+                          f"{REFERENCE_STYLE_LABELS[expected_style]} author-date style."}
+    if parenthetical_total == 0:
+        return {"ok": False, "signals": signals,
+                "reason": f"No {REFERENCE_STYLE_LABELS[expected_style]}-style parenthetical author-date "
+                          f"citations were detected in the body text."}
+    return {"ok": True, "signals": signals}
+
+def effective_run_font_name(run, paragraph, doc):
+    """The font that will actually render for this run, following Word's real
+    inheritance chain: explicit run font -> the run's character style ->
+    the paragraph's style chain (up through base styles) -> the Normal
+    style. A document that sets its font once on the Normal style (the
+    normal, clean way to do it) has NO run-level font.name set on any
+    individual run at all -- checking only r.font.name, as this engine did
+    before, sees every run as "(unspecified)" and false-flags the entire
+    document regardless of what font it actually renders in. Caught against
+    a real, correctly-formatted thesis whose font was being misreported this
+    way."""
+    if run.font.name:
+        return run.font.name
+    if run.style is not None and run.style.font.name:
+        return run.style.font.name
+    style = paragraph.style
+    seen = set()
+    while style is not None and id(style) not in seen:
+        seen.add(id(style))
+        if style.font.name:
+            return style.font.name
+        style = getattr(style, "base_style", None)
+    try:
+        normal = doc.styles["Normal"]
+        if normal.font.name:
+            return normal.font.name
+    except KeyError:
+        pass
+    return None
+
+def validate(path, rendered_pdf=None, reference_style=None):
     path = Path(path)
     doc = Document(path)
     findings = []
@@ -250,13 +452,15 @@ def validate(path, rendered_pdf=None):
     spacing_counts = Counter()
     for i, p in enumerate(paragraphs, 1):
         for r in paragraph_runs(p):
-            font_counts[(r.font.name or "", r.font.size.pt if r.font.size else None)] += len(clean(r.text))
-            if r.font.name and r.font.name.lower() != EXPECTED["font"].lower():
-                non_tnr.append((i, r.font.name, clean(r.text)[:60]))
-        fi = inches(p.paragraph_format.first_line_indent)
+            eff_name = effective_run_font_name(r, p, doc)
+            font_counts[(eff_name or "", r.font.size.pt if r.font.size else None)] += len(clean(r.text))
+            if eff_name and eff_name.lower() != EXPECTED["font"].lower():
+                non_tnr.append((i, eff_name, clean(r.text)[:60]))
+        fi = inches(effective_paragraph_format_value(p, "first_line_indent"))
         if fi and fi > .01:
             indented += 1
-        sa = p.paragraph_format.space_after.pt if p.paragraph_format.space_after else 0
+        sa_raw = effective_paragraph_format_value(p, "space_after")
+        sa = sa_raw.pt if sa_raw is not None else 0
         spacing_counts[round(sa,1)] += 1
     if font_counts:
         dominant_name = Counter()
@@ -333,6 +537,9 @@ def validate(path, rendered_pdf=None):
             bad.append("not bold")
         if hp.alignment is not None and hp.alignment != WD_ALIGN_PARAGRAPH.CENTER:
             bad.append(f"alignment={hp.alignment}")
+        hp_spacing = line_spacing_multiple(hp)
+        if hp_spacing is not None and abs(hp_spacing - 2.0) > 0.1:
+            bad.append(f"line spacing={hp_spacing} (expected double)")
         if bad:
             intro_heading_issues.append((name, "; ".join(bad)))
         if idx + 1 < len(paragraphs):
@@ -344,15 +551,18 @@ def validate(path, rendered_pdf=None):
                 bbad.append(f"size={bsizes}")
             if bp.alignment is not None and bp.alignment != WD_ALIGN_PARAGRAPH.JUSTIFY:
                 bbad.append(f"alignment={bp.alignment}")
+            bp_spacing = line_spacing_multiple(bp, fall_back_to_normal=True)
+            if bp_spacing is not None and abs(bp_spacing - 2.0) > 0.1:
+                bbad.append(f"line spacing={bp_spacing} (expected double)")
             if bbad:
                 intro_body_issues.append((name, "; ".join(bbad)))
     if intro_heading_issues:
         add(findings, "INTRO-001", "Introductory", "Major", "preliminary section headings",
-            "14 pt bold, centered", "; ".join(f"{n}: {i}" for n, i in intro_heading_issues[:6]),
+            "14 pt bold, centered, double-spaced", "; ".join(f"{n}: {i}" for n, i in intro_heading_issues[:6]),
             "One or more preliminary-section headings differ from the prescribed style.", True, 0.7)
     if intro_body_issues:
         add(findings, "INTRO-002", "Introductory", "Major", "preliminary section body text",
-            "12 pt regular, justified", "; ".join(f"{n}: {i}" for n, i in intro_body_issues[:6]),
+            "12 pt regular, justified, double-spaced", "; ".join(f"{n}: {i}" for n, i in intro_body_issues[:6]),
             "Body text immediately following one or more preliminary-section headings differs from the prescribed style.", True, 0.6)
 
     # Title page style checks (TITLE-001..003) — use first meaningful paragraphs.
@@ -363,14 +573,31 @@ def validate(path, rendered_pdf=None):
         title = clean(title_p.text)
         runs = paragraph_runs(title_p)
         sizes = [r.font.size.pt for r in runs if r.font.size]
+        title_bad = []
         if sizes and abs(max(sizes)-16) > 0.5:
+            title_bad.append(f"size={sizes}")
+        if runs and any(r.bold is False for r in runs):
+            title_bad.append("not bold")
+        if title_p.alignment is not None and title_p.alignment != WD_ALIGN_PARAGRAPH.CENTER:
+            title_bad.append(f"alignment={title_p.alignment}")
+        title_spacing = line_spacing_multiple(title_p)
+        if title_spacing is not None and abs(title_spacing - 2.0) > 0.1:
+            title_bad.append(f"line spacing={title_spacing} (expected double)")
+        if title_bad:
             add(findings, "TITLE-001", "Title", "Major", f"paragraph {title_i}",
-                "16 pt Times New Roman, bold, centered, all caps, double-spaced",
-                f"observed sizes={sizes}, alignment={title_p.alignment}",
+                "16 pt Times New Roman, bold, centered, double-spaced",
+                f"'{title}': " + "; ".join(title_bad),
                 "First title-page candidate does not match the prescribed title style.", True)
-        if title != title.upper():
-            add(findings, "TITLE-001", "Title", "Major", f"paragraph {title_i}",
-                "All caps", title, "Thesis title is not all caps.", True)
+        # No all-caps check here: the guideline specifies Title Case for the
+        # thesis title itself (see "Title Of Thesis: ... Title Case,
+        # Alignment: Centered" in Annexure 19's Paragraph Specification).
+        # "All Capital Case" is a separate requirement for the Name Of
+        # Author/Course line (TITLE-002), not the title -- a real, correctly
+        # Title-Case thesis title was being incorrectly flagged here before
+        # this was caught against an actual compliant thesis. Verifying
+        # proper Title Case itself (small words like "a"/"for"/"and" staying
+        # lowercase, hyphenated compounds, etc.) is a soft, judgment-prone
+        # check better left to human review than a naive automated rule.
 
     # TITLE-002 (author/course line) is intentionally not implemented as a
     # deterministic check. The catalogue models it as a single styled line,
@@ -399,6 +626,9 @@ def validate(path, rendered_pdf=None):
             issues.append(f"size={sizes}")
         if runs and any(r.bold is True for r in runs):
             issues.append("bold (expected regular)")
+        uni_spacing = line_spacing_multiple(uni_p)
+        if uni_spacing is not None and abs(uni_spacing - 1.0) > 0.1:
+            issues.append(f"line spacing={uni_spacing} (expected single)")
         if issues:
             add(findings, "TITLE-003", "Title", "Major", f"paragraph {uni_i}",
                 "12 pt regular, single-spaced, all caps, centered",
@@ -435,9 +665,12 @@ def validate(path, rendered_pdf=None):
                 issues.append("not bold")
             if heading_p.alignment is not None and heading_p.alignment != WD_ALIGN_PARAGRAPH.CENTER:
                 issues.append(f"alignment={heading_p.alignment}")
+            chap_spacing = line_spacing_multiple(heading_p)
+            if chap_spacing is not None and abs(chap_spacing - 2.0) > 0.1:
+                issues.append(f"line spacing={chap_spacing} (expected double)")
             if issues:
                 add(findings, "CHAP-002", "Chapter", "Major", f"paragraph {i+1}",
-                    "14 pt bold, centered chapter heading",
+                    "14 pt bold, centered, double-spaced chapter heading",
                     f"'{clean(heading_p.text)}': " + "; ".join(issues),
                     "Chapter heading style differs from the guideline.", True, 0.75)
 
@@ -576,9 +809,18 @@ def validate(path, rendered_pdf=None):
     # trailing window rather than requiring strict adjacency; TAB-002 checks
     # strict adjacency since that's the only pattern observed in practice.
     body_seq = list(extract_body_elements(doc))
+    body_seq_norms = [norm(element_paragraph_text(el)) if kind == "p" else "" for kind, el in body_seq]
+    excluded_body_seq = [r for r in (
+        find_list_section_range(body_seq_norms, {"list of tables"}),
+        find_list_section_range(body_seq_norms, {"list of figures"}),
+    ) if r]
+
+    def in_excluded_body_seq(idx0):
+        return any(s <= idx0 < e for s, e in excluded_body_seq)
+
     tab002_bad, fig002_bad = [], []
     for idx, (kind, el) in enumerate(body_seq):
-        if kind != "p":
+        if kind != "p" or in_excluded_body_seq(idx):
             continue
         t = clean(element_paragraph_text(el))
         if is_caption(t, "table"):
@@ -607,7 +849,10 @@ def validate(path, rendered_pdf=None):
     # APP-001/002: appendix presence/consistency and body cross-references.
     # Mirrors the same pattern already proven for TAB-005/FIG-004 above.
     appendix_headings = []
+    appendix_list_range = find_list_section_range([norm(p.text) for p in paragraphs], {"list of appendices"})
     for i, p in enumerate(paragraphs, 1):
+        if appendix_list_range and appendix_list_range[0] <= (i - 1) < appendix_list_range[1]:
+            continue  # the List of Appendices index page, not a real appendix heading
         m = re.match(r"^(Appendix|Annexure)\s+([A-Z0-9]+)\b", clean(p.text), re.I)
         if m:
             appendix_headings.append((i, f"{m.group(1).title()} {m.group(2)}"))
@@ -727,18 +972,21 @@ def validate(path, rendered_pdf=None):
             "References section exists", "Not detected",
             "A References/Bibliography heading was not detected.", False)
     else:
-        bad_indent=0; bad_spacing=0
+        bad_indent=0; bad_spacing=0; bad_size=0; bad_align=0
         for idx,p in refs:
-            fi=inches(p.paragraph_format.left_indent)
-            first=inches(p.paragraph_format.first_line_indent)
+            fi=inches(effective_paragraph_format_value(p, "left_indent"))
+            first=inches(effective_paragraph_format_value(p, "first_line_indent"))
             if not (fi is not None and first is not None and abs(fi-0.5)<0.05 and abs(first+0.5)<0.05):
                 bad_indent+=1
-            ls=p.paragraph_format.line_spacing
-            if isinstance(ls,float) and abs(ls-1.0)>0.05:
+            ls=line_spacing_multiple(p)
+            if ls is not None and abs(ls-1.0)>0.05:
                 bad_spacing+=1
-            elif str(ls).lower() not in {"none","1.0"} and ls is not None:
-                # python-docx may expose line spacing as numeric or None.
-                bad_spacing+=1
+            runs = paragraph_runs(p)
+            sizes = [r.font.size.pt for r in runs if r.font.size]
+            if sizes and abs(max(sizes) - 12) > 0.5:
+                bad_size += 1
+            if p.alignment is not None and p.alignment != WD_ALIGN_PARAGRAPH.JUSTIFY:
+                bad_align += 1
         if bad_indent:
             add(findings, "REF-002", "References", "Major", "References section",
                 "0.5-inch hanging indent", f"{bad_indent}/{len(refs)} reference paragraphs differ",
@@ -747,6 +995,24 @@ def validate(path, rendered_pdf=None):
             add(findings, "REF-002", "References", "Major", "References section",
                 "Single-spaced", f"{bad_spacing}/{len(refs)} reference paragraphs differ",
                 "Reference formatting does not consistently use single spacing.", True)
+        if bad_size:
+            add(findings, "REF-002", "References", "Major", "References section",
+                "12 pt Times New Roman", f"{bad_size}/{len(refs)} reference paragraphs differ",
+                "Reference formatting does not consistently use the prescribed 12 pt font size.", True)
+        if bad_align:
+            add(findings, "REF-002", "References", "Major", "References section",
+                "Justified alignment", f"{bad_align}/{len(refs)} reference paragraphs differ",
+                "Reference formatting does not consistently use justified alignment.", True)
+
+        if reference_style:
+            style_check = check_reference_style("\n".join(texts), reference_style)
+            if style_check and not style_check["ok"]:
+                add(findings, "REF-003", "References", "Review", "document",
+                    REFERENCE_STYLE_LABELS.get(reference_style, reference_style),
+                    "Citation pattern does not clearly match",
+                    style_check["reason"] + " This is a pattern-based check, not a full citation-style "
+                    "parse -- please confirm the actual reference style during review.",
+                    False, 0.6, "Faculty reference-style requirement")
 
     # Rendered PDF checks are delegated to LibreOffice if supplied.
     render_metrics={}
@@ -813,7 +1079,9 @@ if __name__=="__main__":
     ap.add_argument("docx")
     ap.add_argument("--pdf", default=None)
     ap.add_argument("--output", default="validation_results_v0_2.json")
+    ap.add_argument("--reference-style", default=None, dest="reference_style",
+                     help="Faculty's expected citation style: apa, chicago_author_date, or apa_bluebook")
     a=ap.parse_args()
-    result=validate(a.docx,a.pdf)
+    result=validate(a.docx,a.pdf,a.reference_style)
     Path(a.output).write_text(json.dumps(result,indent=2),encoding="utf-8")
     print(f"Validation complete: {len(result['findings'])} findings")

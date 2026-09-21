@@ -107,13 +107,18 @@ def register(body: RegisterRequest, db: Session = Depends(get_db), principal: Pr
 @router.post("/login", response_model=AuthResponse)
 def login(body: LoginRequest, db: Session = Depends(get_db)):
     user = db.scalar(select(User).where(User.email == body.email))
+    if user and user.active and user.expires_at and user.expires_at < datetime.now(timezone.utc):
+        # Lazily transition to suspended now that the end date has passed.
+        # There's no background job on this hosting tier, so this runs
+        # wherever there's a natural reason to check -- a login attempt here,
+        # or an admin viewing the user list (see admin_users.py's list_users).
+        user.active = False
+        db.commit()
     # Deliberately identical error for "no such user" and "wrong password" --
     # distinguishing them lets an attacker enumerate which emails have
     # accounts. Suspended and expired accounts get the same generic message
     # for the same reason -- don't reveal *why* a login didn't work.
     if not user or not user.active or not user.password_hash or not verify_password(body.password, user.password_hash):
-        raise HTTPException(401, "Incorrect email or password.")
-    if user.expires_at and user.expires_at < datetime.now(timezone.utc):
         raise HTTPException(401, "Incorrect email or password.")
     roles, universities = _user_roles_and_universities(db, user)
     if not roles:

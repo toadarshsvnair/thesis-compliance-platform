@@ -3,7 +3,7 @@ register() only exposes as a raw endpoint. Scoped so a University Admin can
 only manage accounts that hold a role at their own university; a Super Admin
 can manage anyone.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
@@ -124,6 +124,20 @@ class ResetPasswordRequest(BaseModel):
     new_password: str = Field(min_length=8, max_length=200)
 
 
+def _apply_expiry_transitions(db: Session, users: list[User]) -> None:
+    """Same lazy transition as login() -- if an admin is looking at this list,
+    that's as good a moment as any to bring stored `active` up to date with
+    any end date that has since passed."""
+    changed = False
+    now = datetime.now(timezone.utc)
+    for u in users:
+        if u.active and u.expires_at and u.expires_at < now:
+            u.active = False
+            changed = True
+    if changed:
+        db.commit()
+
+
 @router.get("")
 def list_users(university_id: int | None = None, db: Session = Depends(get_db), principal: Principal = Depends(get_principal)):
     _require_admin(principal)
@@ -142,6 +156,7 @@ def list_users(university_id: int | None = None, db: Session = Depends(get_db), 
             select(UserRole).where(UserRole.university_id.in_(target_scope))
         ).all()}
         users = db.scalars(select(User).where(User.id.in_(user_ids)).order_by(User.id)).all() if user_ids else []
+    _apply_expiry_transitions(db, users)
     return [_serialize(db, u) for u in users]
 
 

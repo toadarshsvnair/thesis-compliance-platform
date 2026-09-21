@@ -4,7 +4,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./thesis_compliance.db"
     storage_root: str = "./storage"
     max_upload_mb: int = 50
-    allowed_extensions: str = ".docx"
+    allowed_extensions: str = ".docx,.pdf"
     environment: str = "development"
     oidc_issuer: str = ""
     oidc_audience: str = ""

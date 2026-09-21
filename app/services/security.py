@@ -2,19 +2,29 @@ import os, re, shutil, subprocess
 from pathlib import Path
 from ..config import settings
 
-ALLOWED = {".docx"}
+ALLOWED = {".docx", ".pdf"}
 
 def safe_filename(name: str) -> str:
     base=Path(name).name
     base=re.sub(r"[^A-Za-z0-9._ -]", "_", base)
-    if not base.lower().endswith(".docx"): raise ValueError("Only .docx files are supported.")
+    if not base.lower().endswith((".docx", ".pdf")): raise ValueError("Only .docx or .pdf files are supported.")
     return base[:180]
 
-def validate_magic(path: str) -> bool:
-    with open(path,"rb") as f: return f.read(4)==b"PK\x03\x04"
+def validate_magic(path: str, filename: str) -> bool:
+    """Magic-byte signature check, specific to the declared file type:
+    DOCX is a ZIP container (PK\\x03\\x04); PDF starts with %PDF-."""
+    with open(path, "rb") as f:
+        head = f.read(5)
+    if filename.lower().endswith(".pdf"):
+        return head[:5] == b"%PDF-"
+    return head[:4] == b"PK\x03\x04"
 
 def validate_docx_package(path: str) -> dict:
     from ..security.validation import validate_docx_package as _validate
+    return _validate(path)
+
+def validate_pdf_package(path: str) -> dict:
+    from ..security.validation import validate_pdf_package as _validate
     return _validate(path)
 
 def malware_scan(path: str) -> dict:

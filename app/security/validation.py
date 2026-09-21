@@ -19,3 +19,25 @@ def validate_docx_package(path: str):
                 if name.startswith("/") or ".." in Path(name).parts: raise ValueError("Unsafe ZIP entry path.")
         return {"valid":True,"entries":len(infos),"uncompressed_bytes":total_uncompressed}
     except BadZipFile as exc: raise ValueError("Uploaded file is not a valid ZIP/OOXML package.") from exc
+
+
+MAX_PDF_BYTES = 200 * 1024 * 1024
+
+def validate_pdf_package(path: str):
+    """Structural sanity check for an uploaded PDF -- not a full parse, just
+    enough to reject something that isn't really a PDF or is unreasonably
+    large before it's stored and later opened by other tools (LibreOffice's
+    conversion, PyMuPDF, etc.)."""
+    p = Path(path)
+    size = p.stat().st_size
+    if size > MAX_PDF_BYTES:
+        raise ValueError("PDF exceeds the maximum allowed size.")
+    with open(path, "rb") as f:
+        head = f.read(5)
+        if head != b"%PDF-":
+            raise ValueError("Uploaded file is not a valid PDF.")
+        f.seek(max(0, size - 2048))
+        tail = f.read()
+    if b"%%EOF" not in tail:
+        raise ValueError("PDF is missing its end-of-file marker and may be truncated or corrupted.")
+    return {"valid": True, "size_bytes": size}

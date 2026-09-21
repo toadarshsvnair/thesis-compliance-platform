@@ -258,14 +258,19 @@ function UploadPanel({ session, onCreated }: { session: NonNullable<ReturnType<t
                 </select>
               )}
             </Field>
-            <Field label="Thesis file (.docx)">
+            <Field label="Thesis file (.docx or .pdf)">
               <input
                 required
                 type="file"
-                accept=".docx"
+                accept=".docx,.pdf"
                 onChange={(e) => setFile(e.target.files?.[0] ?? null)}
                 className="w-full text-sm"
               />
+              {file && file.name.toLowerCase().endsWith(".pdf") && (
+                <p className="text-xs text-ochre mt-1.5">
+                  Automated formatting checks require a DOCX and can&apos;t run on a PDF — this submission will be flagged for manual review instead.
+                </p>
+              )}
             </Field>
             {error && <p className="text-sm text-brick">{error}</p>}
             {result && <p className="text-sm text-forest">{result}</p>}

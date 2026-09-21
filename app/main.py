@@ -43,12 +43,13 @@ def startup():
         _backfill_new_columns()
     if settings.demo_seed:
         from .db import SessionLocal
-        from .seed_rules import seed_demo_university_if_empty, seed_demo_admin_if_configured
+        from .seed_rules import seed_demo_university_if_empty, seed_demo_admin_if_configured, seed_faculties_if_missing
         db = SessionLocal()
         try:
             uni = seed_demo_university_if_empty(db)
             if uni:
                 seed_demo_admin_if_configured(db, uni.id)
+                seed_faculties_if_missing(db, uni.id)
         finally:
             db.close()
 
@@ -79,6 +80,9 @@ def _backfill_new_columns():
             conn.execute(text("ALTER TABLE users ADD COLUMN programme VARCHAR(250)"))
         if "faculty_id" not in user_columns:
             conn.execute(text("ALTER TABLE users ADD COLUMN faculty_id INTEGER REFERENCES faculties(id)"))
+        faculty_columns = {c["name"] for c in inspector.get_columns("faculties")}
+        if "reference_style" not in faculty_columns:
+            conn.execute(text("ALTER TABLE faculties ADD COLUMN reference_style VARCHAR(50)"))
 
 app.include_router(health_router,prefix="/api")
 app.include_router(submissions_router,prefix="/api")

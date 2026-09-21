@@ -18,7 +18,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm
-from reportlab.lib.enums import TA_LEFT
+from reportlab.lib.enums import TA_LEFT, TA_CENTER
 from reportlab.graphics.shapes import Drawing
 from reportlab.graphics.charts.barcharts import VerticalBarChart
 from sqlalchemy import select
@@ -121,7 +121,7 @@ def build_evaluation_report(db, submission: Submission) -> tuple[Path, str]:
     body_style = ParagraphStyle("body", parent=styles["BodyText"], fontSize=9.5, leading=13)
     cell_style = ParagraphStyle("cell", parent=styles["BodyText"], fontSize=8.5, leading=11, alignment=TA_LEFT)
     header_style = ParagraphStyle("cellHeader", parent=styles["BodyText"], fontSize=8.5, leading=11,
-                                   textColor=colors.white, fontName="Helvetica-Bold")
+                                   textColor=colors.white, fontName="Helvetica-Bold", alignment=TA_CENTER)
 
     doc = SimpleDocTemplate(
         str(out), pagesize=A4,
@@ -138,6 +138,28 @@ def build_evaluation_report(db, submission: Submission) -> tuple[Path, str]:
         ),
         Spacer(1, 5 * mm),
     ]
+
+    if decision and decision.decision == "compliant":
+        verdict_text, verdict_sub, verdict_bg, verdict_fg = "COMPLIANT", None, colors.HexColor("#EAF2ED"), FOREST
+    elif decision:
+        verdict_text, verdict_sub, verdict_bg, verdict_fg = "NOT COMPLIANT", None, colors.HexColor("#F7EAE7"), BRICK
+    else:
+        verdict_text, verdict_sub = "PENDING REVIEW", "No compliance decision has been recorded yet."
+        verdict_bg, verdict_fg = colors.HexColor("#F5EFE3"), OCHRE
+    verdict_style = ParagraphStyle("verdict", parent=styles["Heading1"], textColor=verdict_fg, fontSize=15, alignment=TA_LEFT, spaceAfter=2, spaceBefore=0)
+    verdict_sub_style = ParagraphStyle("verdictSub", parent=styles["BodyText"], textColor=verdict_fg, fontSize=9.5, spaceAfter=0, spaceBefore=0)
+    verdict_cell = [Paragraph(verdict_text, verdict_style)]
+    if verdict_sub:
+        verdict_cell.append(Paragraph(verdict_sub, verdict_sub_style))
+    verdict_table = Table([[verdict_cell]], colWidths=[182 * mm])
+    verdict_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), verdict_bg),
+        ("BOX", (0, 0), (-1, -1), 0.6, verdict_fg),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("LEFTPADDING", (0, 0), (-1, -1), 10),
+    ]))
+    story += [verdict_table, Spacer(1, 6 * mm)]
 
     meta_rows = [
         ["Report ID", report_id],
@@ -192,7 +214,7 @@ def build_evaluation_report(db, submission: Submission) -> tuple[Path, str]:
     if findings:
         story.append(Paragraph("Findings Detail", section_style))
         header = [Paragraph(h, header_style) for h in
-                   ["Rule", "Severity", "Marking", "Location", "Requirement", "Expected / Actual", "Guideline"]]
+                   ["Rule", "Severity", "Marking", "Location", "Requirement", "Expected / Actual"]]
         rows = [header]
         for f in sorted(findings, key=lambda x: (SEVERITY_ORDER.index(x.severity) if x.severity in SEVERITY_ORDER else 99, x.id)):
             marking_text, marking_color = _marking_for(f.status)
@@ -204,13 +226,12 @@ def build_evaluation_report(db, submission: Submission) -> tuple[Path, str]:
                 Paragraph(f.location, cell_style),
                 Paragraph(f.message, cell_style),
                 Paragraph(f"<b>Expected:</b> {f.expected}<br/><b>Actual:</b> {f.actual}", cell_style),
-                Paragraph(f.source_reference or "—", cell_style),
             ])
         # Widths verified by rendering to an image and inspecting -- see the
         # module docstring. Total = 182mm = A4 width minus this doc's margins.
         # The Marking column needs real width because it's bold text, which
         # is wider per character than the body text elsewhere in the table.
-        col_widths = [20 * mm, 16 * mm, 30 * mm, 20 * mm, 34 * mm, 34 * mm, 24 * mm]
+        col_widths = [20 * mm, 16 * mm, 30 * mm, 26 * mm, 44 * mm, 46 * mm]
         findings_table = Table(rows, colWidths=col_widths, repeatRows=1)
         findings_table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), NAVY_DEEP),
