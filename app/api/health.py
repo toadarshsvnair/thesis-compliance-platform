@@ -36,6 +36,25 @@ def dev_bootstrap(db: Session = Depends(get_db)):
     }
 
 
+@router.get("/dev/list-users")
+def list_users(db: Session = Depends(get_db)):
+    """Demo-mode-only visibility into what accounts actually exist, so
+    bootstrapping (promote-to-super-admin below) doesn't depend on
+    remembering an email from earlier testing. Never returns password
+    hashes, and never exists outside demo mode."""
+    if not settings.demo_seed:
+        raise HTTPException(404, "Not found")
+    users = db.scalars(select(User).order_by(User.id)).all()
+    out = []
+    for u in users:
+        roles = db.scalars(select(UserRole).where(UserRole.user_id == u.id)).all()
+        out.append({
+            "id": u.id, "email": u.email, "display_name": u.display_name, "active": u.active,
+            "roles": [{"role": r.role, "university_id": r.university_id} for r in roles],
+        })
+    return out
+
+
 @router.post("/dev/promote-to-super-admin")
 def promote_to_super_admin(email: str, db: Session = Depends(get_db), principal: Principal | None = Depends(get_principal_optional)):
     """One-time bootstrap escape hatch: if a database somehow ends up with
@@ -55,6 +74,9 @@ def promote_to_super_admin(email: str, db: Session = Depends(get_db), principal:
         db.add(UserRole(user_id=user.id, university_id=None, role="super_admin"))
         db.commit()
     return {"status": "promoted", "email": user.email}
+
+
+@router.post("/dev/reset-submissions")
 def reset_submissions(db: Session = Depends(get_db), principal=Depends(get_principal)):
     """Clears all submissions and everything derived from them (versions,
     findings, review actions, fix approvals, compliance decisions, processing
