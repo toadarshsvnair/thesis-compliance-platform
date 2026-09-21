@@ -14,7 +14,7 @@ import {
   listUniversities,
 } from "@/lib/api";
 import type { DocumentType, Faculty, PublishedRuleSet, Submission, University } from "@/lib/types";
-import { Button, Panel, SectionHeading, StatusBadge } from "@/components/ui";
+import { Button, Masthead, Panel, SectionHeading, StatusBadge } from "@/components/ui";
 import { useRouter } from "next/navigation";
 
 export default function DashboardPage() {
@@ -36,25 +36,23 @@ export default function DashboardPage() {
   if (!session) return null;
 
   return (
-    <main className="max-w-5xl mx-auto px-6 py-10">
-      <header className="flex items-start justify-between mb-8 pb-6 border-b border-line">
-        <div>
-          <h1 className="font-serif text-2xl text-ink">Thesis Compliance Platform</h1>
-          <p className="text-sm text-muted mt-1">
-            Signed in as {session.email} · {session.roles.map((r) => ROLE_LABELS[r]).join(", ")}
-          </p>
-        </div>
-        <Button
-          variant="ghost"
-          onClick={() => {
-            clearSession();
-            router.replace("/login");
-          }}
-        >
-          Sign out
-        </Button>
-      </header>
-
+    <>
+      <Masthead
+        subtitle={`Signed in as ${session.displayName || session.email} · ${session.roles.map((r) => ROLE_LABELS[r]).join(", ")}`}
+        right={
+          <Button
+            variant="ghost"
+            className="!text-paper hover:!underline"
+            onClick={() => {
+              clearSession();
+              router.replace("/login");
+            }}
+          >
+            Sign out
+          </Button>
+        }
+      />
+      <main className="max-w-5xl mx-auto px-6 py-10">
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-8">
         <section>
           <SectionHeading>Submissions</SectionHeading>
@@ -103,7 +101,8 @@ export default function DashboardPage() {
 
         <UploadPanel session={session} onCreated={refresh} />
       </div>
-    </main>
+      </main>
+    </>
   );
 }
 
@@ -123,7 +122,6 @@ function UploadPanel({ session, onCreated }: { session: NonNullable<ReturnType<t
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -194,7 +192,7 @@ function UploadPanel({ session, onCreated }: { session: NonNullable<ReturnType<t
     <aside>
       <SectionHeading>New submission</SectionHeading>
       <Panel className="p-5">
-                {loadError ? (
+        {loadError ? (
           <p className="text-sm text-brick">{loadError}</p>
         ) : universities.length === 0 ? (
           <p className="text-sm text-muted">

@@ -32,12 +32,7 @@ export function clearSession(): void {
 }
 
 export function sessionHeaders(session: Session): Record<string, string> {
-  return {
-    "X-User-Id": session.userId,
-    "X-User-Email": session.email,
-    "X-User-Roles": session.roles.join(","),
-    "X-University-Ids": session.universityIds.join(","),
-  };
+  return { Authorization: `Bearer ${session.token}` };
 }
 
 export const ROLE_LABELS: Record<Role, string> = {

@@ -11,8 +11,9 @@ class User(Base):
     __tablename__ = "users"
     id: Mapped[int] = mapped_column(primary_key=True)
     external_subject: Mapped[str] = mapped_column(String(250), unique=True, index=True)
-    email: Mapped[str] = mapped_column(String(320), index=True)
+    email: Mapped[str] = mapped_column(String(320), index=True, unique=True)
     display_name: Mapped[str | None] = mapped_column(String(250), nullable=True)
+    password_hash: Mapped[str | None] = mapped_column(String(200), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
@@ -118,6 +119,7 @@ class Finding(Base):
     actual: Mapped[str] = mapped_column(Text)
     message: Mapped[str] = mapped_column(Text)
     confidence: Mapped[float | None] = mapped_column(nullable=True)
+    source_reference: Mapped[str | None] = mapped_column(String(300), nullable=True)
     auto_fix_allowed: Mapped[bool] = mapped_column(Boolean, default=False)
     status: Mapped[str] = mapped_column(String(30), default="open")
     source_type: Mapped[str] = mapped_column(String(30), default="deterministic")

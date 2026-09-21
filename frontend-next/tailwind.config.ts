@@ -12,8 +12,10 @@ const config: Config = {
         line: "#DAD5C8",
         navy: {
           DEFAULT: "#1E3A5F",
-          deep: "#14283F",
+          deep: "#122238",
+          light: "#2C5282",
         },
+        gold: "#B08D3F",
         brick: "#8C3B2E",
         ochre: "#A67C3D",
         forest: "#2F6B4F",

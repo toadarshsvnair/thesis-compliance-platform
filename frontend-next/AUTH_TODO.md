@@ -1,42 +1,51 @@
-# Replacing the placeholder login with real OIDC
+# Authentication status
 
-Today, `/login` lets anyone pick a role and university ID, store it in
-`localStorage`, and have every API call send it as `X-User-*` headers — this
-mirrors the backend's own dev-mode header authentication
-(`app/security/dependencies.py`), which only exists for local development
-and explicitly refuses to run this way once `ENVIRONMENT` is `production` or
-`staging`. Neither half of this is a real access control.
+## What's real now
 
-## What changes, and what doesn't
+`/login` is a genuine username/password system, not a placeholder:
+- Passwords are hashed with PBKDF2-HMAC-SHA256 (260,000 iterations), never
+  stored or logged in plain text (`app/security/passwords.py`).
+- A successful login gets a real, signed token (`app/security/identity.py`'s
+  `issue_self_signed_token`) — HS256, signed with the backend's `SECRET_KEY`,
+  12-hour expiry, containing the user's actual roles and university IDs from
+  the database (`app/models.py`'s `User`/`UserRole`, previously unused
+  scaffolding — nothing in the app queried them before this).
+- `app/security/dependencies.py`'s `get_principal` verifies that token on
+  every request. Wrong signature or expired token is rejected — both were
+  tested directly (not just read through) before this shipped.
+- The old dev-header placeholder (`X-User-*`) still exists as a fallback for
+  local development convenience, but a real bearer token now takes priority
+  whenever one is presented, in every environment.
 
-The API client's call sites (every function in `lib/api.ts`) don't need to
-change at all — they already just call `sessionHeaders(session)` to get
-whatever headers to attach. Only two things need to change:
+## What's still a placeholder
 
-1. **`lib/session.ts`** — instead of reading/writing `localStorage`, this
-   becomes "get the current user's ID token from the OIDC provider's SDK"
-   (e.g. NextAuth.js, Auth0's Next.js SDK, or a hand-rolled
-   `next-auth`-style flow against your chosen identity provider).
-2. **The header shape itself** — `sessionHeaders()` currently builds
-   `X-User-Id` / `X-User-Roles` / etc. Once the backend's OIDC path is live
-   (`app/security/identity.py`'s `principal_from_jwt`), this becomes a
-   single `Authorization: Bearer <id_token>` header instead, and the
-   role/university claims come from the token itself, not from the
-   frontend's own state.
+This is **not** OIDC/SSO — it doesn't integrate with Alliance University's
+actual identity system (or Google/Microsoft/anything external). It's a
+self-contained login this application owns entirely. Specifically still
+missing:
+- **Account provisioning at scale.** Right now, registration is wide open in
+  demo mode (`DEMO_SEED=true`) and admin-gated otherwise — there's no bulk
+  import of real student/staff accounts, and no bootstrapping path for a real
+  deployment's *first* admin account (would need a one-off database insert
+  or script).
+- **Password reset / forgot-password flow.** Doesn't exist yet.
+- **True single sign-on**, if the university wants people to use their
+  existing university credentials rather than a separate password for this
+  tool specifically.
 
-## Sequencing with the backend
+## If/when real OIDC/SSO is wanted later
 
-This can't land in the frontend alone — it depends on:
-- An actual identity provider being chosen and configured (Google
-  Workspace, Azure AD, Auth0, Keycloak, or similar) with real client
-  credentials.
-- `OIDC_ISSUER`, `OIDC_AUDIENCE`, `OIDC_JWKS_URL`, and `OIDC_REQUIRED=true`
-  set on the backend (`app/config.py` already has these settings; they're
-  just unset in the demo deployment).
-- A decision on how roles map from the identity provider's claims to this
-  app's four roles (student / research_officer / university_admin /
-  super_admin) — the backend's `principal_from_jwt` already reads a `roles`
-  claim and a `realm_access.roles` claim (Keycloak-style), but whichever
-  provider gets chosen needs to actually populate one of those.
-
-None of that is a frontend decision to make alone.
+`get_principal` already has a code path for it (`principal_from_jwt` in
+`identity.py`, validated against `OIDC_ISSUER`/`OIDC_AUDIENCE`/`OIDC_JWKS_URL`)
+— it's been there since the original handoff, just never wired to a real
+provider. Both auth methods can coexist (self-issued tokens for accounts
+created here, OIDC tokens for SSO'd-in accounts) since `get_principal` already
+tries self-issued first and falls back to OIDC. Adding it means:
+1. Choosing and configuring an actual identity provider (Google Workspace,
+   Azure AD, Auth0, Keycloak, etc.) with real client credentials.
+2. Setting `OIDC_ISSUER`, `OIDC_AUDIENCE`, `OIDC_JWKS_URL` on the backend.
+3. On the frontend: swapping `/login`'s form for whatever redirect flow the
+   chosen provider uses (this is the part that actually changes — the API
+   client's call sites in `lib/api.ts` don't need to change either way, they
+   just call `sessionHeaders(session)` regardless of how the token was
+   obtained).

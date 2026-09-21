@@ -63,6 +63,7 @@ class ProcessingService:
                 actual=item["actual"],
                 message=item["message"],
                 confidence=item.get("confidence"),
+                source_reference=item.get("basis"),
                 auto_fix_allowed=item.get("auto_fix") == "Yes",
                 status="open",
             ))

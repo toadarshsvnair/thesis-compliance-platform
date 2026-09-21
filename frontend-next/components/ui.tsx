@@ -73,3 +73,39 @@ export function Panel({ children, className }: { children: React.ReactNode; clas
 export function SectionHeading({ children }: { children: React.ReactNode }) {
   return <h2 className="font-serif text-lg text-ink border-b border-line pb-2 mb-4">{children}</h2>;
 }
+
+const TRUST_MARKS = [
+  "Annexure 18 / 19 Rule Coverage",
+  "SHA-256 Version Integrity",
+  "Hash-Chained Audit Trail",
+  "Human-Gated Compliance Decision",
+];
+
+/** The top masthead used on every authenticated page — an institutional-portal
+ * treatment (navy bar, trust-mark strip) rather than a plain page title. The
+ * trust marks are real, verifiable properties of this platform, not
+ * accreditation claims. */
+export function Masthead({ subtitle, right }: { subtitle?: string; right?: React.ReactNode }) {
+  return (
+    <div className="bg-navy text-paper">
+      <div className="max-w-5xl mx-auto px-6 py-5 flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <p className="text-[11px] tracking-[0.14em] text-gold font-medium mb-1">UNIVERSITY THESIS REVIEW</p>
+          <h1 className="font-serif text-2xl leading-tight">Thesis Compliance Platform</h1>
+          {subtitle && <p className="text-sm text-paper/70 mt-1">{subtitle}</p>}
+        </div>
+        {right}
+      </div>
+      <div className="border-t border-paper/10">
+        <div className="max-w-5xl mx-auto px-6 py-2.5 flex flex-wrap gap-x-6 gap-y-1">
+          {TRUST_MARKS.map((mark) => (
+            <span key={mark} className="text-[11px] text-paper/60 flex items-center gap-1.5">
+              <span className="w-1 h-1 rounded-full bg-gold" />
+              {mark}
+            </span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}

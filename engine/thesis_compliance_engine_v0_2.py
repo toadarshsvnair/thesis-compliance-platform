@@ -19,6 +19,7 @@ from collections import Counter, defaultdict
 import argparse, hashlib, json, re, subprocess, shutil, sys, zipfile, xml.etree.ElementTree as ET
 from docx import Document
 from docx.oxml.ns import qn
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 EXPECTED = {
     "page_width_in": 8.27,
@@ -31,6 +32,36 @@ EXPECTED = {
         "LIST OF FIGURES", "LIST OF ABBREVIATIONS", "LIST OF APPENDICES"
     ],
 }
+
+# Maps each tracked preliminary section to its own catalogue rule ID (Rule
+# Catalogue v0.2). Previously every missing section was reported under the
+# single generic "PRE-001", which meant a reviewer looking up "PRE-001" in the
+# approved catalogue saw "Title Page" no matter which section was actually
+# missing. PRE-001 itself is handled separately below (see the PRE-001..015
+# block) since the catalogue defines it specifically as title-page presence,
+# which none of these eleven tracked sections represent.
+PRELIM_RULE_IDS = {
+    "DECLARATION": "PRE-002",
+    "CERTIFICATE": "PRE-003",
+    "DEDICATION": "PRE-004",
+    "ACKNOWLEDGEMENT": "PRE-005",
+    "ABSTRACT": "PRE-006",
+    "PREFACE": "PRE-007",
+    "TABLE OF CONTENTS": "PRE-008",
+    "LIST OF TABLES": "PRE-009",
+    "LIST OF FIGURES": "PRE-010",
+    "LIST OF ABBREVIATIONS": "PRE-011",
+    "LIST OF APPENDICES": "PRE-012",
+}
+
+# Anchored at both ends (only "CHAPTER N", optionally with a trailing colon or
+# period) so a heading like "CHAPTER 2" isn't confused with body prose that
+# happens to start the same way, e.g. a "structure of the thesis" paragraph
+# such as "Chapter 2 – The comprehensive literature review discusses...".
+# The original, looser pattern (matched as a prefix) counted both as the same
+# kind of thing, which could make CHAP-001's sequential-numbering check see
+# duplicate/out-of-order numbers that were really just narrative mentions.
+CHAPTER_HEADING_RE = re.compile(r"^CHAPTER\s+(\d+)\s*[:.]?\s*$", re.I)
 
 SEVERITY = {"Critical": 4, "Major": 3, "Review": 2, "Minor": 1}
 
@@ -258,11 +289,18 @@ def validate(path, rendered_pdf=None):
             aliases += ["LIST OF ABBREVIATION"]
         pos = locate_section(paragraphs, aliases)
         if pos is None:
-            add(findings, "PRE-001", "Preliminary structure", "Major", "document",
+            add(findings, PRELIM_RULE_IDS[expected], "Preliminary structure", "Major", "document",
                 f"Section '{expected}' exists", "Not detected",
                 f"Required preliminary section '{expected}' was not detected.", False)
         else:
             positions[expected] = pos
+    if positions and min(positions.values()) == 0:
+        earliest = min(positions, key=positions.get)
+        add(findings, "PRE-001", "Preliminary structure", "Major", "document",
+            "Distinct title-page content precedes the first preliminary section",
+            "No content detected before the first preliminary section",
+            f"'{earliest}' appears to be the very first content in the document; no distinct title-page content was detected ahead of it.",
+            False, 0.7)
     if len(positions) == len(EXPECTED["preliminary"]):
         actual_order = sorted(positions, key=lambda k: positions[k])
         if actual_order != EXPECTED["preliminary"]:
@@ -277,6 +315,45 @@ def validate(path, rendered_pdf=None):
             add(findings, "PRE-014", "Preliminary structure", "Major",
                 "List of Abbreviations", "Actual abbreviation entries", "Heading detected but no nearby content detected",
                 "List of Abbreviations appears to lack entries.", False)
+
+    # INTRO-001/002: style of each preliminary-section heading itself, and the
+    # body text immediately following it. ("Introductory" in the catalogue
+    # covers the preliminary pages as a category -- Declaration, Abstract,
+    # Acknowledgement, etc. -- not a single standalone "introduction" section.)
+    intro_heading_issues = []
+    intro_body_issues = []
+    for name, idx in positions.items():
+        hp = paragraphs[idx]
+        runs = paragraph_runs(hp)
+        sizes = [r.font.size.pt for r in runs if r.font.size]
+        bad = []
+        if sizes and abs(max(sizes) - 14) > 0.5:
+            bad.append(f"size={sizes}")
+        if runs and any(r.bold is False for r in runs):
+            bad.append("not bold")
+        if hp.alignment is not None and hp.alignment != WD_ALIGN_PARAGRAPH.CENTER:
+            bad.append(f"alignment={hp.alignment}")
+        if bad:
+            intro_heading_issues.append((name, "; ".join(bad)))
+        if idx + 1 < len(paragraphs):
+            bp = paragraphs[idx + 1]
+            brs = paragraph_runs(bp)
+            bsizes = [r.font.size.pt for r in brs if r.font.size]
+            bbad = []
+            if bsizes and abs(max(bsizes) - 12) > 0.5:
+                bbad.append(f"size={bsizes}")
+            if bp.alignment is not None and bp.alignment != WD_ALIGN_PARAGRAPH.JUSTIFY:
+                bbad.append(f"alignment={bp.alignment}")
+            if bbad:
+                intro_body_issues.append((name, "; ".join(bbad)))
+    if intro_heading_issues:
+        add(findings, "INTRO-001", "Introductory", "Major", "preliminary section headings",
+            "14 pt bold, centered", "; ".join(f"{n}: {i}" for n, i in intro_heading_issues[:6]),
+            "One or more preliminary-section headings differ from the prescribed style.", True, 0.7)
+    if intro_body_issues:
+        add(findings, "INTRO-002", "Introductory", "Major", "preliminary section body text",
+            "12 pt regular, justified", "; ".join(f"{n}: {i}" for n, i in intro_body_issues[:6]),
+            "Body text immediately following one or more preliminary-section headings differs from the prescribed style.", True, 0.6)
 
     # Title page style checks (TITLE-001..003) — use first meaningful paragraphs.
     meaningful = [(i+1,p) for i,p in enumerate(paragraphs[:30])]
@@ -295,12 +372,45 @@ def validate(path, rendered_pdf=None):
             add(findings, "TITLE-001", "Title", "Major", f"paragraph {title_i}",
                 "All caps", title, "Thesis title is not all caps.", True)
 
+    # TITLE-002 (author/course line) is intentionally not implemented as a
+    # deterministic check. The catalogue models it as a single styled line,
+    # but real theses split this across several distinct lines (a degree
+    # line, a "by" line, the author's name, department, college) with no
+    # reliable positional marker distinguishing "the" author/course line from
+    # the others -- forcing a positional heuristic here risks confidently
+    # flagging the wrong line. This is better suited to the AI-assisted
+    # semantic layer (or a documented catalogue revision) than a guess here.
+
+    # TITLE-003: institution name/address, found by content rather than
+    # position (the title-page region varies in line count between theses).
+    # Restricted to an all-caps line so an incidental mention like "Thesis
+    # submitted to Alliance University" isn't mistaken for the formal
+    # all-caps institution-name display line the guideline actually means.
+    title_region_end = min(positions.values()) if positions else 30
+    university_candidates = [(i+1, p) for i, p in enumerate(paragraphs[:title_region_end])
+                              if re.search(r"\bUNIVERSITY\b", p.text, re.I)
+                              and clean(p.text) == clean(p.text).upper()]
+    if university_candidates:
+        uni_i, uni_p = university_candidates[0]
+        runs = paragraph_runs(uni_p)
+        sizes = [r.font.size.pt for r in runs if r.font.size]
+        issues = []
+        if sizes and abs(max(sizes) - 12) > 0.5:
+            issues.append(f"size={sizes}")
+        if runs and any(r.bold is True for r in runs):
+            issues.append("bold (expected regular)")
+        if issues:
+            add(findings, "TITLE-003", "Title", "Major", f"paragraph {uni_i}",
+                "12 pt regular, single-spaced, all caps, centered",
+                f"'{clean(uni_p.text)}': " + "; ".join(issues),
+                "University name/address line style differs from the guideline.", True, 0.6)
+
     # Headings / chapter structure
     heads = heading_records(doc)
     explicit_chapters = []
     for i,p in enumerate(paragraphs,1):
         t=clean(p.text)
-        m=re.match(r"^CHAPTER\s+(\d+)\b", t, re.I)
+        m=CHAPTER_HEADING_RE.match(t)
         if m:
             explicit_chapters.append((i,int(m.group(1)),t,p))
     nums=[x[1] for x in explicit_chapters]
@@ -310,6 +420,66 @@ def validate(path, rendered_pdf=None):
             add(findings, "CHAP-001", "Chapter", "Major", "chapter headings",
                 "Sequential chapter numbering", str(nums),
                 "Chapter numbering is not sequential.", False)
+
+    # CHAP-002: the chapter-heading title on the paragraph immediately
+    # following "CHAPTER N" (e.g. "CHAPTER 1" / "INTRODUCTION" as two lines).
+    for (i, num, text, p) in explicit_chapters:
+        if i < len(paragraphs):
+            heading_p = paragraphs[i]
+            runs = paragraph_runs(heading_p)
+            sizes = [r.font.size.pt for r in runs if r.font.size]
+            issues = []
+            if sizes and abs(max(sizes) - 14) > 0.5:
+                issues.append(f"size={sizes}")
+            if runs and any(r.bold is False for r in runs):
+                issues.append("not bold")
+            if heading_p.alignment is not None and heading_p.alignment != WD_ALIGN_PARAGRAPH.CENTER:
+                issues.append(f"alignment={heading_p.alignment}")
+            if issues:
+                add(findings, "CHAP-002", "Chapter", "Major", f"paragraph {i+1}",
+                    "14 pt bold, centered chapter heading",
+                    f"'{clean(heading_p.text)}': " + "; ".join(issues),
+                    "Chapter heading style differs from the guideline.", True, 0.75)
+
+    # SEC-001/002/003: section/subsection/sub-subsection heading style, keyed
+    # by numbering depth (1.1 = section, 1.1.1 = subsection, 1.2.2.1 =
+    # sub-subsection). Uses doc.paragraphs directly (not the pre-filtered
+    # `paragraphs` list) purely for a simple, self-contained loop.
+    SEC_RULE_BY_DEPTH = {1: "SEC-001", 2: "SEC-002", 3: "SEC-003"}
+    SEC_EXPECTED_STYLE = {1: "12 pt bold", 2: "12 pt bold italic", 3: "12 pt italic (not bold)"}
+    SEC_LABEL = {1: "section", 2: "subsection", 3: "sub-subsection"}
+    sec_issues = defaultdict(list)
+    for p in doc.paragraphs:
+        t = clean(p.text)
+        if not t:
+            continue
+        m = re.match(r"^(\d+(?:\.\d+){1,3})\s+\S", t)
+        if not m:
+            continue
+        depth = m.group(1).count(".")
+        if depth not in SEC_RULE_BY_DEPTH:
+            continue
+        runs = paragraph_runs(p)
+        if not runs:
+            continue
+        sizes = [r.font.size.pt for r in runs if r.font.size]
+        bolds = [r.bold for r in runs]
+        italics = [r.italic for r in runs]
+        bad = []
+        if sizes and abs(max(sizes) - 12) > 0.5:
+            bad.append(f"size={sizes}")
+        if depth in (1, 2) and any(b is False for b in bolds):
+            bad.append("not bold")
+        if depth in (2, 3) and any(it is False for it in italics):
+            bad.append("not italic")
+        if depth == 1 and any(it is True for it in italics):
+            bad.append("unexpectedly italic")
+        if bad:
+            sec_issues[depth].append((m.group(1), "; ".join(bad)))
+    for depth, entries in sec_issues.items():
+        add(findings, SEC_RULE_BY_DEPTH[depth], "Sections", "Major", "section headings",
+            SEC_EXPECTED_STYLE[depth], f"{len(entries)} heading(s) differ; examples={entries[:5]}",
+            f"One or more {SEC_LABEL[depth]} headings differ from the prescribed style.", True, 0.75)
 
     # Tables/figures and cross references.
     # DOCX paragraph extraction misses some captions embedded in text boxes/shapes
@@ -398,6 +568,73 @@ def validate(path, rendered_pdf=None):
                 "Cross-reference", "Major", "body text",
                 f"{kind.title()} {n} exists", "No matching caption detected",
                 f"Broken {kind} reference: {kind.title()} {n}.", False)
+
+    # TAB-002/FIG-002: caption position relative to its table/figure.
+    # Table captions are expected immediately above the table; figure
+    # captions immediately below the figure. Real documents sometimes have a
+    # paragraph or two of spacing around a figure, so FIG-002 checks a small
+    # trailing window rather than requiring strict adjacency; TAB-002 checks
+    # strict adjacency since that's the only pattern observed in practice.
+    body_seq = list(extract_body_elements(doc))
+    tab002_bad, fig002_bad = [], []
+    for idx, (kind, el) in enumerate(body_seq):
+        if kind != "p":
+            continue
+        t = clean(element_paragraph_text(el))
+        if is_caption(t, "table"):
+            nxt = body_seq[idx + 1] if idx + 1 < len(body_seq) else None
+            if not (nxt and nxt[0] == "tbl"):
+                tab002_bad.append(t[:60])
+        elif is_caption(t, "figure"):
+            window = body_seq[max(0, idx - 3):idx]
+            has_image = any(
+                k == "p" and (e.findall(".//" + qn("w:drawing")) or e.findall(".//" + qn("w:pict")))
+                for k, e in window
+            )
+            if not has_image:
+                fig002_bad.append(t[:60])
+    if tab002_bad:
+        add(findings, "TAB-002", "Tables", "Major", "table captions",
+            "Caption positioned immediately above its table",
+            f"{len(tab002_bad)} caption(s) not immediately followed by a table; examples={tab002_bad[:5]}",
+            "One or more table captions are not positioned immediately above the table.", False, 0.75)
+    if fig002_bad:
+        add(findings, "FIG-002", "Figures", "Major", "figure captions",
+            "Caption positioned immediately below its figure",
+            f"{len(fig002_bad)} caption(s) with no image detected nearby; examples={fig002_bad[:5]}",
+            "One or more figure captions are not positioned near an image.", False, 0.6)
+
+    # APP-001/002: appendix presence/consistency and body cross-references.
+    # Mirrors the same pattern already proven for TAB-005/FIG-004 above.
+    appendix_headings = []
+    for i, p in enumerate(paragraphs, 1):
+        m = re.match(r"^(Appendix|Annexure)\s+([A-Z0-9]+)\b", clean(p.text), re.I)
+        if m:
+            appendix_headings.append((i, f"{m.group(1).title()} {m.group(2)}"))
+    has_list_of_appendices = "LIST OF APPENDICES" in positions
+    if has_list_of_appendices and not appendix_headings:
+        add(findings, "APP-001", "Appendices", "Major", "document",
+            "Appendix content corresponding to the List of Appendices",
+            "List of Appendices section present but no Appendix headings detected in the body",
+            "A List of Appendices section exists but no corresponding appendix content was detected.", False, 0.7)
+    elif appendix_headings and not has_list_of_appendices:
+        add(findings, "APP-001", "Appendices", "Major", "document",
+            "List of Appendices section listing the detected appendix content",
+            f"{len(appendix_headings)} appendix heading(s) detected but no List of Appendices section found",
+            "Appendix content exists in the body but no List of Appendices preliminary section was detected.", False, 0.7)
+    if appendix_headings:
+        appendix_index_set = {i for i, _ in appendix_headings}
+        ref_labels = set()
+        for i, p in enumerate(paragraphs, 1):
+            if i in appendix_index_set:
+                continue
+            for m in re.finditer(r"\b(?:Appendix|Annexure)\s+([A-Z0-9]+)\b", clean(p.text), re.I):
+                ref_labels.add(m.group(1).upper())
+        unreferenced = [lbl for i, lbl in appendix_headings if lbl.split()[-1].upper() not in ref_labels]
+        if unreferenced:
+            add(findings, "APP-002", "Appendices", "Major", "body text",
+                "Every appendix referenced in the body", f"No body reference detected for: {', '.join(unreferenced)}",
+                "One or more appendices do not appear to be referenced in the body text.", False, 0.65)
 
     # Check table content font minimum.
     for ti, tbl in enumerate(doc.tables, 1):

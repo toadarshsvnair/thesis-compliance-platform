@@ -6,8 +6,10 @@
 export type Role = "student" | "research_officer" | "university_admin" | "super_admin";
 
 export interface Session {
+  token: string;
   userId: string;
   email: string;
+  displayName: string;
   roles: Role[];
   universityIds: number[];
 }
@@ -57,6 +59,7 @@ export interface Finding {
   actual: string;
   message: string;
   confidence: number | null;
+  source_reference: string | null;
   auto_fix_allowed: boolean;
   status: "open" | "reviewed" | "rejected" | "waived" | "fix_approved" | "fixed" | "revalidation_failed" | string;
 }

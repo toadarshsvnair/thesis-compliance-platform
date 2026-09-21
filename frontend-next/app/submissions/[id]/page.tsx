@@ -10,6 +10,7 @@ import {
   certificateDownloadUrl,
   compareVersions,
   downloadFile,
+  evaluationReportUrl,
   generateCertificate,
   getAuditTrail,
   getFindings,
@@ -21,7 +22,7 @@ import {
   versionDownloadUrl,
 } from "@/lib/api";
 import type { AuditEvent, DocumentVersion, Finding, FixPreviewOut, ReviewSummary, VersionCompare } from "@/lib/types";
-import { Button, Panel, SectionHeading, SeverityBadge, StatusBadge } from "@/components/ui";
+import { Button, Masthead, Panel, SectionHeading, SeverityBadge, StatusBadge } from "@/components/ui";
 
 const REVIEW_ROLES = ["research_officer", "university_admin", "super_admin"] as const;
 
@@ -159,6 +160,19 @@ export default function SubmissionDetailPage() {
     }
   }
 
+  async function handleDownloadEvaluationReport() {
+    if (!session) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await downloadFile(session, evaluationReportUrl(id), `evaluation-report-submission-${id}.pdf`);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Report generation failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleCompare(sourceId: number, targetId: number) {
     if (!session) return;
     try {
@@ -171,7 +185,9 @@ export default function SubmissionDetailPage() {
   const s = summary.submission;
 
   return (
-    <main className="max-w-5xl mx-auto px-6 py-10">
+    <>
+      <Masthead subtitle="Submission review" />
+      <main className="max-w-5xl mx-auto px-6 py-10">
       <Button variant="ghost" onClick={() => router.push("/dashboard")} className="mb-6 !px-0">
         ← Back to dashboard
       </Button>
@@ -181,7 +197,12 @@ export default function SubmissionDetailPage() {
           <h1 className="font-serif text-2xl text-ink">
             {s.student_name} <span className="text-muted font-sans text-lg">— {s.registration_number}</span>
           </h1>
-          <StatusBadge status={s.status} />
+          <div className="flex items-center gap-3">
+            <StatusBadge status={s.status} />
+            <Button variant="ghost" disabled={busy} onClick={handleDownloadEvaluationReport}>
+              Download evaluation report (PDF)
+            </Button>
+          </div>
         </div>
         {(s.programme || s.supervisor) && (
           <p className="text-sm text-muted mt-1">
@@ -243,6 +264,9 @@ export default function SubmissionDetailPage() {
                       <p className="text-xs text-muted mt-1">
                         Expected: {f.expected} · Actual: {f.actual}
                       </p>
+                      {f.source_reference && (
+                        <p className="text-xs text-muted italic mt-0.5">Guideline: {f.source_reference}</p>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <StatusBadge status={f.status} />
@@ -380,7 +404,8 @@ export default function SubmissionDetailPage() {
           </div>
         </section>
       )}
-    </main>
+      </main>
+    </>
   );
 }
 

@@ -60,6 +60,51 @@ async function request<T>(
   return text ? (JSON.parse(text) as T) : (undefined as T);
 }
 
+// ---- Authentication ----
+
+export interface AuthResult {
+  access_token: string;
+  token_type: string;
+  user: { id: number; email: string; display_name: string; roles: string[]; university_ids: number[] };
+}
+
+async function authRequest(path: string, body: unknown): Promise<AuthResult> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    let message = text;
+    try {
+      const parsed = JSON.parse(text);
+      message = typeof parsed.detail === "string" ? parsed.detail : JSON.stringify(parsed.detail);
+    } catch {
+      /* not JSON */
+    }
+    throw new ApiError(res.status, message || `Request failed (${res.status})`);
+  }
+  return JSON.parse(text) as AuthResult;
+}
+
+export const login = (email: string, password: string) => authRequest("/auth/login", { email, password });
+
+export const register = (input: {
+  email: string;
+  password: string;
+  displayName: string;
+  role: string;
+  universityId: number;
+}) =>
+  authRequest("/auth/register", {
+    email: input.email,
+    password: input.password,
+    display_name: input.displayName,
+    role: input.role,
+    university_id: input.universityId,
+  });
+
 // ---- Reference data ----
 
 export const listUniversities = (session: Session) =>
@@ -215,6 +260,7 @@ export const generateCertificate = (session: Session, submissionId: number) =>
   );
 
 export const certificateDownloadUrl = (id: number) => `${API_BASE}/submissions/${id}/certificate/download`;
+export const evaluationReportUrl = (id: number) => `${API_BASE}/submissions/${id}/evaluation-report`;
 
 // Plain <a href> links can't attach the X-User-* auth headers a browser
 // navigation needs, so downloads go through fetch() (which can) and then

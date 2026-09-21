@@ -186,7 +186,7 @@ def get_findings(submission_id: int, db: Session = Depends(get_db), principal = 
     return [
         {"id": x.id, "rule_id": x.rule_id, "category": x.category, "severity": x.severity,
          "location": x.location, "expected": x.expected, "actual": x.actual,
-         "message": x.message, "confidence": x.confidence,
+         "message": x.message, "confidence": x.confidence, "source_reference": x.source_reference,
          "auto_fix_allowed": x.auto_fix_allowed, "status": x.status}
         for x in rows
     ]
