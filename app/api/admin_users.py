@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import User, UserRole, Submission
@@ -280,6 +281,23 @@ def delete_user(user_id: int, db: Session = Depends(get_db), principal: Principa
         )
     for r in _user_roles(db, user.id):
         db.delete(r)
-    db.delete(user)
-    db.commit()
+    try:
+        db.delete(user)
+        db.commit()
+    except IntegrityError as exc:
+        # A raw, uncaught database error here would crash all the way up to
+        # Starlette's default error handler, which sits OUTSIDE the CORS
+        # middleware -- the resulting 500 response has no CORS headers, and
+        # the browser reports that confusingly as "blocked by CORS policy"
+        # even though the real cause is this constraint violation. Always
+        # catch it and return a normal, CORS-intact error instead: this
+        # account is referenced by data this endpoint doesn't yet know to
+        # check for and clear first.
+        db.rollback()
+        raise HTTPException(
+            409,
+            "This account is still referenced by other data (beyond submissions, which were "
+            "already checked) and can't be deleted. Suspend the account instead, or contact "
+            "support with this detail: " + str(exc.orig if exc.orig else exc),
+        )
     return {"status": "deleted", "id": user_id}

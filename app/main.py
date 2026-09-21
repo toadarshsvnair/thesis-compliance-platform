@@ -1,7 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import FileResponse, RedirectResponse
+from starlette.requests import Request
+from fastapi.responses import FileResponse, RedirectResponse, JSONResponse
+import logging
 from .db import Base, engine
 from .api.health import router as health_router
 from .api.submissions import router as submissions_router
@@ -33,6 +35,34 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RequestSecurityMiddleware)
 app.add_middleware(SimpleRateLimitMiddleware, requests_per_minute=settings.rate_limit_per_minute)
 instrument(app)
+
+_logger = logging.getLogger("uvicorn.error")
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception):
+    """Catches anything that isn't a deliberate HTTPException. Without this,
+    an unhandled exception escapes all the way to Starlette's default error
+    handler (ServerErrorMiddleware) -- the TRUE outermost layer, added by
+    Starlette even before CORSMiddleware. Registering a handler for the
+    bare Exception class runs INSIDE that same outermost layer (Starlette
+    special-cases it to become ServerErrorMiddleware's own handler), and
+    that middleware sends the handler's response directly to the ASGI
+    server, bypassing every inner middleware including CORSMiddleware
+    entirely. So the CORS header has to be added by hand here -- returning
+    a plain JSONResponse from this handler would look identical to no
+    handler at all, still missing 'Access-Control-Allow-Origin', and the
+    browser would still report it as a CORS block even though a real
+    server-side crash is the actual cause (exactly what happened when
+    deleting a user hit an unexpected database constraint).
+    """
+    _logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    response = JSONResponse(status_code=500, content={"detail": "An unexpected error occurred. This has been logged."})
+    origin = request.headers.get("origin")
+    if origin and origin in origins:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Vary"] = "Origin"
+    return response
 
 @app.on_event("startup")
 def startup():
